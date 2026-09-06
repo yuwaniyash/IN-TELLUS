@@ -1,2 +1,4 @@
-.history/
+﻿.history/
 .env
+__pycache__/
+*.pyc

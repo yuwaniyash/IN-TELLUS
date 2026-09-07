@@ -1,2 +1,16 @@
 .history/
 .env
+
+# Python virtual environment — never commit this, everyone builds their own
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Uploaded bill files — may contain real customer data, keep local only
+uploads/
+
+# Editor/OS clutter
+.vscode/
+.DS_Store

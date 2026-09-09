@@ -16,3 +16,6 @@ streamlit==1.38.0
 pandas==2.2.3
 pydantic==2.9.2
 pdfplumber==0.11.4
+thefuzz
+python-Levenshtein
+python-dateutil

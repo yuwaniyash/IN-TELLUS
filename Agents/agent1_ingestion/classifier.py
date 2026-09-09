@@ -1,168 +1,197 @@
-# Agents/agent1_ingestion/classifier.py
 """
-Person 3 - Step 2: label raw extracted fragments as quantity/unit/date/site-name.
+classifier.py
+Person 3 -- NLP component of Agent 1.
 
-Input: a list of raw text fragments Person 2 pulled off a bill.
-Output: a list of {fragment, label, resolved_by, meta} dicts.
+Classifies a raw text fragment extracted from a bill into one of:
+    quantity | unit | date | site_name | unknown
 
-Three genuinely distinct tiers, matching the three technologies the
-assignment requires as separate pieces:
-
-  1. Rules (regex + the unit_lookup dict/fuzzy table) - fast, free,
-     exact for predictable fixed-shape fields: numbers, dates, known
-     unit strings.
-  2. Real NLP model (spaCy NER) - catches unpredictable proper nouns
-     (company/site names) that no regex can anticipate. Only run when
-     the rules tier couldn't already classify the fragment.
-  3. LLM fallback (stub - Person 4 wires in the real call) - genuinely
-     ambiguous leftovers that even the NLP model isn't confident on.
-     Never guesses; returns "unknown" rather than a wrong label.
+Uses a 3-tier cascade:
+    1. Rule-based (regex) -- fast, free, handles predictable formats
+    2. spaCy NER          -- real NLP model, catches proper nouns (site/org names)
+    3. LLM fallback (stub) -- last resort for genuinely ambiguous fragments,
+                              to be replaced with a real LLM call by Person 4
 """
 
 import re
+import spacy
+from dateutil import parser as dateutil_parser
+from dateutil.parser import ParserError
+
 from unit_lookup import lookup_unit
+from site_lookup import normalize_site_name
 
-try:
-    from dateutil import parser as dateutil_parser
-except ImportError:  # pragma: no cover - dateutil is in requirements.txt
-    dateutil_parser = None
+# Load once at module level -- loading per-call would be extremely slow.
+_NLP = spacy.load("en_core_web_sm")
 
-try:
-    import spacy
-    _NLP = spacy.load("en_core_web_sm")
-except (ImportError, OSError):  # pragma: no cover - see requirements.txt
-    _NLP = None
+# Words that must NEVER be classified as a site/org name, even if spaCy's
+# NER model tags them as one. Found via real testing: spaCy tagged the
+# single capitalized word "DIESEL" as an ORG entity (false positive).
+NON_SITE_DENYLIST = {
+    "diesel", "petrol", "electricity", "fuel", "water", "gas",
+    "kwh", "litres", "liters", "gallons", "units",
+    # Missing-data markers -- spaCy's NER has a known quirk of tagging
+    # "N/A" as an ORG entity, which would otherwise slip through as a
+    # false-positive site-name. Real bills/logs use these often (seen in
+    # the team's own fuel CSV, e.g. blank Supplier/DriverOperator cells).
+    "n/a", "na", "none", "null", "-",
+}
 
-DATE_PATTERN = re.compile(
-    r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$"      # 12/08/2026 or 12-08-26
-    r"|^\d{4}[/-]\d{1,2}[/-]\d{1,2}$"       # 2026-08-12
-)
+# Regex patterns for the predictable, structured fields.
+# Quantity: handles comma thousands-separators (e.g. "4,500").
+# Deliberately does NOT match a leading "-": negative consumption values
+# are data-entry errors, not valid quantities (see _looks_like_negative_number).
+QUANTITY_PATTERN = re.compile(r"^[\d,]+(\.\d+)?$")
 
-QUANTITY_PATTERN = re.compile(r"^-?\d+(\.\d+)?$")  # 245.6, 245, 0.5, -38.93
+# Matched separately from QUANTITY_PATTERN and checked FIRST in the cascade.
+# This matters: without an early, dedicated check, a negative number like
+# "-38.93" would fail QUANTITY_PATTERN and then get handed to dateutil's
+# date parser, which will happily (and wrongly) parse it as a real date
+# (e.g. "-38.93" -> 2038-09-08). Catching it here stops that misparse and
+# correctly routes it to the LLM tier as a flagged, unresolved value instead.
+NEGATIVE_NUMBER_PATTERN = re.compile(r"^-[\d,]+(\.\d+)?$")
 
-# spaCy entity labels that plausibly mean "a place or organisation name"
-_SITE_ENTITY_LABELS = {"ORG", "GPE", "FAC", "LOC"}
-
-# Domain words that spaCy sometimes tags as ORG/site names (single
-# capitalized fuel-type words look like company names to a small NER
-# model) but must never be accepted as a site name here. Found this the
-# same way we found the "gallons"->litres unit bug: by actually running
-# real values through the classifier instead of assuming it works.
-_NLP_SITE_DENYLIST = {
-    "diesel", "petrol", "gasoline", "lpg", "electricity", "water",
-    "gas", "fuel", "kerosene",
+# A conservative set of known unit words/abbreviations, used to short-circuit
+# unit detection before falling through to NLP/LLM.
+UNIT_WORDS = {
+    "kwh", "units", "l", "litre", "litres", "liter", "liters",
+    "gallon", "gallons", "gal", "m3",
 }
 
 
-def _looks_like_date(text: str) -> bool:
-    """Try the fast regex first, then fall back to dateutil for the
-    formats regex can't reasonably keep up with (word-months like
-    "03-Jul-2026", dot-separated "23.07.2026", etc.).
+def _looks_like_quantity(text: str) -> bool:
+    return bool(QUANTITY_PATTERN.match(text.strip()))
 
-    Bare numbers (e.g. "245.6", "9999.99") are never treated as dates
-    here, even via the dateutil fallback - dateutil will happily
-    misread a plain decimal as a day/month, which silently corrupted
-    quantities into dates the first time this was tried. Those are
-    left to the quantity tier below instead.
+
+def _looks_like_negative_number(text: str) -> bool:
+    return bool(NEGATIVE_NUMBER_PATTERN.match(text.strip()))
+
+
+def _looks_like_unit(text: str) -> bool:
+    return text.strip().lower() in UNIT_WORDS
+
+
+def _looks_like_date(text: str) -> dict | None:
     """
-    if DATE_PATTERN.match(text):
-        return True
-    if QUANTITY_PATTERN.match(text):
-        return False
-    if dateutil_parser is None:
-        return False
-    if not re.search(r"\d", text):
-        return False
+    Attempts to parse text as a date using dateutil, which handles the
+    wide variety of real-world formats found in actual bills
+    (e.g. "03-Jul-2026", "23.07.2026", "20 July 2026").
+
+    Returns a result dict if it parses AND the text does not already
+    look like a bare quantity (guards against numbers like "9999.99"
+    being misread as a date, which dateutil's fuzzy parsing can do).
+    """
+    stripped = text.strip()
+    if _looks_like_quantity(stripped):
+        return None
     try:
-        dateutil_parser.parse(text, fuzzy=False)
-        return True
-    except (ValueError, OverflowError):
-        return False
+        parsed = dateutil_parser.parse(stripped, fuzzy=False)
+        return {
+            "label": "date",
+            "value": parsed.date().isoformat(),
+            "resolved_by": "rules",
+        }
+    except (ParserError, ValueError, OverflowError):
+        return None
 
 
-def _nlp_site_guess(text: str) -> dict | None:
-    """Tier 2: real NLP (spaCy NER). Returns a meta dict if spaCy is
-    confident this fragment is an org/place name, otherwise None.
+def _rule_based_classify(text: str) -> dict | None:
+    """Tier 1: try fast, deterministic rules first."""
+    stripped = text.strip()
+    if not stripped:
+        return None
 
-    Bills are frequently printed in ALL CAPS ("LANKA ELECTRICITY
-    COMPANY"), and spaCy's small model is noticeably weaker on
-    stylized/all-caps text than on natural sentence case. Normalizing
-    to title case before running NER fixes most of that gap - it's a
-    known limitation of en_core_web_sm, not a bug in how it's used.
+    # Negative numbers are data-entry errors, not valid quantities -- and
+    # must never reach the date check below (dateutil will misparse them).
+    # Returning None here sends them straight to the LLM/review tier.
+    if _looks_like_negative_number(stripped):
+        return None
+
+    if _looks_like_quantity(stripped):
+        return {"label": "quantity", "value": stripped, "resolved_by": "rules"}
+
+    if _looks_like_unit(stripped):
+        unit_info = lookup_unit(stripped)
+        return {"label": "unit", "value": stripped, "unit_info": unit_info, "resolved_by": "rules"}
+
+    date_result = _looks_like_date(stripped)
+    if date_result:
+        return date_result
+
+    return None
+
+
+def _spacy_classify(text: str) -> dict | None:
     """
-    if _NLP is None or not text:
+    Tier 2: real NLP model (spaCy NER). Used specifically for
+    unpredictable proper nouns -- site/organization names -- that
+    regex cannot reliably catch.
+
+    Bills are frequently in ALL CAPS, and spaCy's small model performs
+    noticeably worse on all-caps text than on normal title case, so we
+    normalize casing before running NER.
+    """
+    stripped = text.strip()
+    if not stripped:
         return None
 
-    if text.strip().lower() in _NLP_SITE_DENYLIST:
+    # Never let spaCy call a known non-site word a site name.
+    if stripped.lower() in NON_SITE_DENYLIST:
         return None
 
-    normalized = text.title() if text.isupper() else text
-    doc = _NLP(normalized)
+    normalized_for_ner = stripped.title() if stripped.isupper() else stripped
+    doc = _NLP(normalized_for_ner)
+
     for ent in doc.ents:
-        if ent.label_ in _SITE_ENTITY_LABELS and ent.text.strip().lower() not in _NLP_SITE_DENYLIST:
-            return {"entity_text": ent.text, "entity_label": ent.label_}
+        if ent.label_ in ("ORG", "GPE", "FAC", "LOC"):
+            site_info = normalize_site_name(stripped)
+            return {
+                "label": "site-name",
+                "value": site_info["site"],
+                "site_info": site_info,
+                "resolved_by": "nlp",
+            }
+
     return None
 
 
 def _llm_fallback_stub(text: str) -> dict:
-    """Tier 3: LLM fallback - PLACEHOLDER.
-
-    TODO (Person 4): replace this with a real call to the LLM per
-    docs/api_contract.md. It should attempt to classify `text` as
-    quantity/unit/date/site-name from context, and honestly return
-    "unknown" rather than guessing if it can't tell.
     """
-    return {"label": "unknown", "resolved_by": "llm_stub", "meta": None}
+    Tier 3: last resort for fragments neither rules nor spaCy could
+    confidently classify.
+
+    TODO (Person 4): replace this stub with a real LLM API call.
+    The LLM should be given the raw fragment and asked to classify it
+    as quantity/unit/date/site_name, or return "unknown" if it
+    genuinely cannot tell -- it must not guess with false confidence.
+    """
+    return {
+        "label": "unknown",
+        "value": text.strip(),
+        "resolved_by": "llm_stub",
+        "needs_review": True,
+    }
 
 
-def classify_fragment(fragment: str) -> dict:
-    """Classify a single raw fragment. Returns
-    {fragment, label, resolved_by, meta}."""
-    text = fragment.strip()
+def classify_fragment(text: str) -> dict:
+    """
+    Classifies a single text fragment through the 3-tier cascade.
+    Returns a dict describing the label, value, and which tier
+    resolved it (useful for auditability / debugging).
+    """
+    if text is None or not str(text).strip():
+        return {"label": "unknown", "value": "", "resolved_by": "empty_input"}
 
-    # --- Tier 1: rules ---
+    result = _rule_based_classify(str(text))
+    if result:
+        return result
 
-    # 1a. Is it a date?
-    if _looks_like_date(text):
-        return {"fragment": fragment, "label": "date", "resolved_by": "rules", "meta": None}
+    result = _spacy_classify(str(text))
+    if result:
+        return result
 
-    # 1b. Is it a known unit? (check before quantity, since "kWh" isn't numeric anyway)
-    unit_result = lookup_unit(text)
-    if unit_result["resolved"]:
-        return {"fragment": fragment, "label": "unit", "resolved_by": "rules", "meta": unit_result}
-
-    # 1c. Is it a plain (positive) number? -> quantity
-    #     Negative numbers and non-numeric junk ("N/A", blanks) fall
-    #     through instead of being accepted as valid quantities - those
-    #     are data-entry errors that need to be flagged, not silently
-    #     treated as real values.
-    if QUANTITY_PATTERN.match(text) and not text.startswith("-"):
-        return {"fragment": fragment, "label": "quantity", "resolved_by": "rules", "meta": None}
-
-    # --- Tier 2: real NLP (spaCy NER) ---
-    nlp_guess = _nlp_site_guess(text)
-    if nlp_guess is not None:
-        return {"fragment": fragment, "label": "site-name", "resolved_by": "nlp", "meta": nlp_guess}
-
-    # --- Tier 3: LLM fallback (stub) ---
-    llm_result = _llm_fallback_stub(text)
-    return {"fragment": fragment, "label": llm_result["label"], "resolved_by": "llm_stub", "meta": None}
+    return _llm_fallback_stub(str(text))
 
 
 def classify_fragments(fragments: list[str]) -> list[dict]:
-    """Classify a whole list of fragments coming from Person 2's extraction."""
+    """Convenience wrapper to classify a list of fragments."""
     return [classify_fragment(f) for f in fragments]
-
-
-# --- Step 2 self-test: run this file directly ---
-if __name__ == "__main__":
-    # Made-up fragments, standing in for Person 2's real regex output
-    sample_fragments = [
-        "245.6", "kWh", "12/08/2026", "LANKA ELECTRICITY COMPANY",
-        "Colombo Branch", "Units", "9999.99", "gallons", "DIESEL",
-        "03-Jul-2026", "23.07.2026", "-38.93", "N/A",
-    ]
-
-    results = classify_fragments(sample_fragments)
-    for r in results:
-        print(r)

@@ -66,10 +66,10 @@ def test_fuel_type_casing_normalized():
 
 def test_site_names_mostly_canonicalized():
     """
-    Known gap: abbreviations like 'Colombo HQ' / 'Colomboheadoffice' aren't
-    resolved to the same canonical site as 'Colombo Head Office' yet — that
-    needs Person 3's IR lookup-table approach. This test documents the
-    current state so the gap is visible, not silently ignored.
+    Verify that the known canonical site names dominate the parsed results.
+
+    Person 3's IR lookup resolves site abbreviations, casing variants,
+    spacing variants, and known aliases to the four canonical sites.
     """
     transactions = _load_transactions()
     from collections import Counter
@@ -78,4 +78,3 @@ def test_site_names_mostly_canonicalized():
     top_4_total = sum(count for site, count in site_counts.most_common(4))
     clean_rate = top_4_total / len(transactions)
     assert clean_rate > 0.85, f"Canonicalization rate dropped to {clean_rate:.1%}"
-    assert clean_rate < 1.0, "If this hits 100%, update the test — Person 3's IR fix landed, remove this TODO"

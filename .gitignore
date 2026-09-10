@@ -1,9 +1,7 @@
-@"
-.history/
+﻿.history/
 .env
 __pycache__/
 *.pyc
 .vscode/
 *.session.sql
 uploads/
-"@ | Out-File -Encoding utf8 .gitignore

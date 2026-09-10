@@ -48,6 +48,10 @@ KNOWN_SITES = [
 ]
 
 _SITE_FUZZY_THRESHOLD = 0.82
+SITE_ALIASES = {
+    "kandy": "Kandy Branch",
+    "galle": "Galle Branch",
+}
 
 
 def _expand_abbreviations(text: str) -> str:
@@ -57,6 +61,13 @@ def _expand_abbreviations(text: str) -> str:
 
 def normalize_site_name(raw_site: str, threshold: float = _SITE_FUZZY_THRESHOLD) -> dict:
     raw_site = str(raw_site).strip()
+    alias = SITE_ALIASES.get(raw_site.lower())
+    if alias:
+        return {
+            "site": alias,
+            "confidence": "exact",
+            "needs_review": False
+        }
 
     for site in KNOWN_SITES:
         if raw_site.lower() == site.lower():

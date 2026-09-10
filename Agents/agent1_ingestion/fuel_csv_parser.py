@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from site_lookup import normalize_site_name
+from .site_lookup import normalize_site_name
 
 # --- Unit normalization -----------------------------------------------------
 # All variants seen in real logs map to a single canonical spelling.

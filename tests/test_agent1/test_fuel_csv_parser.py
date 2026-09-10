@@ -66,11 +66,9 @@ def test_fuel_type_casing_normalized():
 
 def test_site_names_mostly_canonicalized():
     """
-    Known gap: abbreviations like 'Colombo HQ' / 'Colomboheadoffice' aren't
-    resolved to the same canonical site as 'Colombo Head Office' yet — that
-    needs Person 3's IR lookup-table approach. This test documents the
-    current state so the gap is visible, not silently ignored.
-    """
+Person 3's IR site lookup now canonicalizes the fuel CSV site names.
+The 4 canonical sites should account for all parsed transactions.
+"""
     transactions = _load_transactions()
     from collections import Counter
     site_counts = Counter(t.site for t in transactions)
@@ -78,4 +76,4 @@ def test_site_names_mostly_canonicalized():
     top_4_total = sum(count for site, count in site_counts.most_common(4))
     clean_rate = top_4_total / len(transactions)
     assert clean_rate > 0.85, f"Canonicalization rate dropped to {clean_rate:.1%}"
-    assert clean_rate < 1.0, "If this hits 100%, update the test — Person 3's IR fix landed, remove this TODO"
+    

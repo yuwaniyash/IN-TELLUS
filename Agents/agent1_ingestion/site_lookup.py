@@ -25,6 +25,11 @@ Exposes: normalize_site_name(raw_site) -> dict with keys:
 import re
 from difflib import SequenceMatcher
 
+SITE_ALIASES = {
+    "kandy": "Kandy Branch",
+    "galle": "Galle Branch",
+}
+
 ABBREVIATIONS = {
     "ho": "head office",
     "hq": "head office",
@@ -61,6 +66,14 @@ def _expand_abbreviations(text: str) -> str:
 
 def normalize_site_name(raw_site: str, threshold: float = _SITE_FUZZY_THRESHOLD) -> dict:
     raw_site = str(raw_site).strip()
+    alias = SITE_ALIASES.get(raw_site.lower())
+    if alias:
+        return {
+            "site": alias,
+            "confidence": "exact",
+            "needs_review": False
+        }
+
     alias = SITE_ALIASES.get(raw_site.lower())
     if alias:
         return {

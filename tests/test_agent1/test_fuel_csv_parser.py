@@ -66,14 +66,22 @@ def test_fuel_type_casing_normalized():
 
 def test_site_names_mostly_canonicalized():
     """
-Person 3's IR site lookup now canonicalizes the fuel CSV site names.
-The 4 canonical sites should account for all parsed transactions.
-"""
+    Verify that the known canonical site names dominate the parsed results.
+
+    Person 3's IR lookup resolves site abbreviations, casing variants,
+    spacing variants, and known aliases to the four canonical sites.
+    """
     transactions = _load_transactions()
     from collections import Counter
     site_counts = Counter(t.site for t in transactions)
-    # The 4 well-formed site names should dominate, but won't be 100% yet.
-    top_4_total = sum(count for site, count in site_counts.most_common(4))
+
+    top_4_total = sum(
+        count for site, count in site_counts.most_common(4)
+    )
     clean_rate = top_4_total / len(transactions)
-    assert clean_rate > 0.85, f"Canonicalization rate dropped to {clean_rate:.1%}"
-    
+
+    assert clean_rate > 0.85, (
+        f"Canonicalization rate dropped to {clean_rate:.1%}"
+    )
+
+  

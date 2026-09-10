@@ -2,13 +2,17 @@ from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 
-from schemas import (
+from .schemas import (
     ExtractionRecord,
     ExtractionResponse
 )
 
-from llm_fallback import llm_fallback
-from pipeline import run_extraction_pipeline
+from .llm_fallback import llm_fallback
+from .pipeline import run_extraction_pipeline
+
+from Security_Layer.sanitization import validate_file
+from Security_Layer.file_intake import get_connection, update_processing_status
+import uuid
 
 # Matches text_extraction.py's UPLOAD_ROOT (repo root) and file_path
 # convention (relative to repo root).
@@ -21,6 +25,39 @@ app = FastAPI(
     version="1.0.0"
 )
 
+def create_raw_file_record(
+    file_name: str,
+    resource_type: str,
+    file_type: str,
+    file_path: str
+) -> int:
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO raw_files
+            (file_name, resource_type, file_type, file_path, processing_status)
+        VALUES
+            (%s, %s, %s, %s, %s)
+        RETURNING file_id;
+        """,
+        (
+            file_name,
+            resource_type,
+            file_type,
+            file_path,
+            "PENDING"
+        )
+    )
+
+    file_id = cur.fetchone()[0]
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return file_id
 
 @app.get("/")
 def root():
@@ -52,30 +89,46 @@ async def extract(
     # the raw_files DB insert, and processing_status tracking. This is
     # only enough to unblock testing the real Person 2/3 pipeline today.
 
+    # =======================================================
+# PERSON 1
+# File validation + temporary saving
+# =======================================================
+
     if not file.filename:
         raise HTTPException(
-            status_code=400,
-            detail="No filename provided"
-        )
+        status_code=400,
+        detail="No filename provided"
+    )
 
     suffix = Path(file.filename).suffix.lower()
-    if suffix == ".pdf":
-        file_type = "pdf"
-    elif suffix == ".csv":
-        file_type = "csv"
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{suffix}'. Only .pdf and .csv are supported."
-        )
 
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    saved_path = UPLOAD_DIR / file.filename
+    if suffix not in {".pdf", ".csv"}:
+        raise HTTPException(
+        status_code=400,
+        detail=f"Unsupported file type '{suffix}'. Only .pdf and .csv are supported."
+    )
+
+    file_type = suffix.replace(".", "")
+
     contents = await file.read()
+
+# Use Person 1's security validation
+    is_valid, reason = validate_file(contents, file.filename)
+
+    if not is_valid:
+     raise HTTPException(
+        status_code=400,
+        detail=reason
+    )
+
+# Save using a unique filename
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+    unique_filename = f"{uuid.uuid4()}{suffix}"
+    saved_path = UPLOAD_DIR / unique_filename
     saved_path.write_bytes(contents)
 
-    # file_path passed to Person 2's extract_text() must be relative to
-    # REPO_ROOT, matching text_extraction.py's UPLOAD_ROOT convention.
     relative_file_path = str(saved_path.relative_to(REPO_ROOT))
 
     # =======================================================
@@ -84,7 +137,37 @@ async def extract(
     # =======================================================
 
     try:
-        raw_text, partial_data_list = run_extraction_pipeline(relative_file_path, file_type)
+        raw_text, partial_data_list = run_extraction_pipeline(
+            relative_file_path,
+            file_type
+        )
+
+        # Resource type is determined by the extraction pipeline.
+        resource_types = {
+            data.get("resource_type")
+            for data in partial_data_list
+            if data.get("resource_type")
+        }
+
+        if not resource_types:
+            raise ValueError(
+                "Could not determine resource type from the uploaded file."
+            )
+
+        # A single uploaded bill should have one resource type.
+        resource_type = next(iter(resource_types))
+
+        # Create the raw_files record.
+        file_id = create_raw_file_record(
+            file_name=file.filename,
+            resource_type=resource_type,
+            file_type=file_type,
+            file_path=relative_file_path
+        )
+
+        # Extraction is now actively being processed.
+        update_processing_status(file_id, "PROCESSING")
+
     except Exception as e:
         raise HTTPException(
             status_code=422,
@@ -155,6 +238,7 @@ async def extract(
             response_warnings.append(f"record dropped, failed validation: {e}")
             continue
 
+        record.record_id = file_id
         records.append(record)
         response_warnings.extend(record.warnings)
 
@@ -167,7 +251,7 @@ async def extract(
     # =======================================================
     # RETURN CLEAN STRUCTURED DATA
     # =======================================================
-
+    update_processing_status(file_id, "COMPLETED")
     return ExtractionResponse(
         success=True,
         records=records,

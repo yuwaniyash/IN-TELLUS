@@ -15,7 +15,7 @@ import uuid
 import psycopg2
 from dotenv import load_dotenv
 
-from sanitization import validate_file  # reuse the safety check
+from .sanitization import validate_file  # reuse the safety check
 
 # ============================================================
 # DATABASE CONNECTION

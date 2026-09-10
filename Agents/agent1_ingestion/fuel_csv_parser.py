@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from site_lookup import normalize_site_name
+
 # --- Unit normalization -----------------------------------------------------
 # All variants seen in real logs map to a single canonical spelling.
 # NOTE: 'gallons' is intentionally NOT auto-converted to litres — US and UK
@@ -56,7 +58,7 @@ class FuelTransaction:
     company: str
     transaction_date: date | None
     transaction_date_raw: str
-    site: str                    # normalized (see normalize_site_name)
+    site: str                    # canonical site name, resolved via unit_lookup.normalize_site_name()
     site_raw: str
     fuel_type: str | None        # normalized: 'petrol' | 'diesel' | None if unrecognized
     fuel_type_raw: str
@@ -80,20 +82,6 @@ def normalize_unit(raw_unit: str) -> tuple[str | None, bool]:
 def normalize_fuel_type(raw_fuel_type: str) -> str | None:
     cleaned = raw_fuel_type.strip().lower()
     return FUEL_TYPE_NORMALIZATION.get(cleaned)
-
-
-def normalize_site_name(raw_site: str) -> str:
-    """
-    Collapses whitespace/casing variants of the same site into one canonical
-    form: 'Colombo  Head Office', 'colomboheadoffice', 'Colombo HO' -> all
-    need a human-reviewed canonical list. This function does the easy 80%
-    (whitespace + casing); true fuzzy-matching of abbreviations like 'HO' vs
-    'Head Office' is IR territory — flag to Person 3 to formalize as a
-    lookup table (same pattern as utility_format_reference), since new
-    site-name variants will keep showing up as more data comes in.
-    """
-    collapsed = re.sub(r"\s+", " ", raw_site.strip())
-    return collapsed.title()
 
 
 def parse_date(raw_date: str) -> date | None:
@@ -132,12 +120,16 @@ def parse_fuel_transaction_row(row: dict) -> FuelTransaction:
     if fuel_type is None and raw_fuel:
         warnings.append(f"Unrecognized fuel type: '{raw_fuel}'")
 
+    site_result = normalize_site_name(row.get("Site", ""))
+    if site_result.get("needs_review"):
+        warnings.append(f"site '{row.get('Site', '')}' unresolved, needs manual review")
+
     return FuelTransaction(
         transaction_id=row.get("TransactionID", ""),
         company=row.get("Company", "").strip(),
         transaction_date=parsed_date,
         transaction_date_raw=row.get("TransactionDate", ""),
-        site=normalize_site_name(row.get("Site", "")),
+        site=site_result["site"],
         site_raw=row.get("Site", ""),
         fuel_type=fuel_type,
         fuel_type_raw=raw_fuel,

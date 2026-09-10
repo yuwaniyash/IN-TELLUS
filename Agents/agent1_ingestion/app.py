@@ -9,7 +9,7 @@ from .schemas import (
 
 from .llm_fallback import llm_fallback
 from .pipeline import run_extraction_pipeline
-
+from Database.save_records import save_extraction_record
 from Security_Layer.sanitization import validate_file
 from Security_Layer.file_intake import get_connection, update_processing_status
 import uuid
@@ -89,10 +89,7 @@ async def extract(
     # the raw_files DB insert, and processing_status tracking. This is
     # only enough to unblock testing the real Person 2/3 pipeline today.
 
-    # =======================================================
-# PERSON 1
-# File validation + temporary saving
-# =======================================================
+   
 
     if not file.filename:
         raise HTTPException(
@@ -240,6 +237,11 @@ async def extract(
 
         record.record_id = file_id
         records.append(record)
+        try:
+            saved_id = save_extraction_record(record.model_dump(), file_id)
+            record.record_id = str(saved_id)
+        except Exception as e:
+            response_warnings.append(f"record extracted but failed to save to database: {e}")
         response_warnings.extend(record.warnings)
 
     if not records:

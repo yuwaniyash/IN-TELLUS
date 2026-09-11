@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 
 from .schemas import (
     ExtractionRecord,
@@ -12,10 +12,9 @@ from .pipeline import run_extraction_pipeline
 from Database.save_records import save_extraction_record
 from Security_Layer.sanitization import validate_file
 from Security_Layer.file_intake import get_connection, update_processing_status
+from Security_Layer.auth import get_current_company
 import uuid
 
-# Matches text_extraction.py's UPLOAD_ROOT (repo root) and file_path
-# convention (relative to repo root).
 REPO_ROOT = Path(__file__).parent.parent.parent
 UPLOAD_DIR = REPO_ROOT / "uploads"
 
@@ -29,7 +28,8 @@ def create_raw_file_record(
     file_name: str,
     resource_type: str,
     file_type: str,
-    file_path: str
+    file_path: str,
+    company_id: int
 ) -> int:
     conn = get_connection()
     cur = conn.cursor()
@@ -37,9 +37,9 @@ def create_raw_file_record(
     cur.execute(
         """
         INSERT INTO raw_files
-            (file_name, resource_type, file_type, file_path, processing_status)
+            (file_name, resource_type, file_type, file_path, processing_status, company_id)
         VALUES
-            (%s, %s, %s, %s, %s)
+            (%s, %s, %s, %s, %s, %s)
         RETURNING file_id;
         """,
         (
@@ -47,7 +47,8 @@ def create_raw_file_record(
             resource_type,
             file_type,
             file_path,
-            "PENDING"
+            "PENDING",
+            company_id
         )
     )
 
@@ -76,7 +77,8 @@ def health():
 
 @app.post("/extract", response_model=ExtractionResponse)
 async def extract(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    company_id: int = Depends(get_current_company)
 ):
 
     # =======================================================
@@ -84,43 +86,26 @@ async def extract(
     # File validation + saving
     # =======================================================
 
-    # TODO: replace this whole block with Person 1's validate_and_save_file(file)
-    # once it's ready — it should own file-type/size/CSV-injection checks,
-    # the raw_files DB insert, and processing_status tracking. This is
-    # only enough to unblock testing the real Person 2/3 pipeline today.
-
-   
-
     if not file.filename:
-        raise HTTPException(
-        status_code=400,
-        detail="No filename provided"
-    )
+        raise HTTPException(status_code=400, detail="No filename provided")
 
     suffix = Path(file.filename).suffix.lower()
 
     if suffix not in {".pdf", ".csv"}:
         raise HTTPException(
-        status_code=400,
-        detail=f"Unsupported file type '{suffix}'. Only .pdf and .csv are supported."
-    )
+            status_code=400,
+            detail=f"Unsupported file type '{suffix}'. Only .pdf and .csv are supported."
+        )
 
     file_type = suffix.replace(".", "")
 
     contents = await file.read()
 
-# Use Person 1's security validation
     is_valid, reason = validate_file(contents, file.filename)
-
     if not is_valid:
-     raise HTTPException(
-        status_code=400,
-        detail=reason
-    )
+        raise HTTPException(status_code=400, detail=reason)
 
-# Save using a unique filename
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
 
     unique_filename = f"{uuid.uuid4()}{suffix}"
     saved_path = UPLOAD_DIR / unique_filename
@@ -136,10 +121,10 @@ async def extract(
     try:
         raw_text, partial_data_list = run_extraction_pipeline(
             relative_file_path,
-            file_type
+            file_type,
+            company_id
         )
 
-        # Resource type is determined by the extraction pipeline.
         resource_types = {
             data.get("resource_type")
             for data in partial_data_list
@@ -151,18 +136,16 @@ async def extract(
                 "Could not determine resource type from the uploaded file."
             )
 
-        # A single uploaded bill should have one resource type.
         resource_type = next(iter(resource_types))
 
-        # Create the raw_files record.
         file_id = create_raw_file_record(
             file_name=file.filename,
             resource_type=resource_type,
             file_type=file_type,
-            file_path=relative_file_path
+            file_path=relative_file_path,
+            company_id=company_id
         )
 
-        # Extraction is now actively being processed.
         update_processing_status(file_id, "PROCESSING")
 
     except Exception as e:
@@ -176,28 +159,17 @@ async def extract(
 
     # =======================================================
     # PER-RECORD: REQUIRED FIELDS CHECK -> LLM FALLBACK -> VALIDATION
-    #
-    # A PDF or single-bill CSV produces exactly one partial_data dict here.
-    # A fuel transaction log produces one per transaction row (could be
-    # 1000+) — each is checked and validated independently so one bad row
-    # never blocks the rest of the file, matching Person 2's "never fail
-    # all-or-nothing" design in rule_parser.py / fuel_csv_parser.py.
     # =======================================================
 
-    # billing_period is a hard requirement for bills (it's the only period
-    # indicator they have), but NOT for fuel transactions — those already
-    # carry their own transaction_date, and billing_period is just a
-    # convenience field derived from it. Forcing a fuel record with a good
-    # quantity/unit/site/fuel_type through the full LLM fallback just
-    # because its date didn't parse throws away a real confidence score
-    # and mislabels the record, for no benefit — the missing date is
-    # already captured as a warning on the record itself.
     required_fields = [
         "resource_type",
         "consumption",
         "unit",
         "billing_period",
-        "site"
+        "site",
+        "previous_reading",
+        "current_reading",
+        "amount_lkr"
     ]
     required_fields_fuel = [
         "resource_type",
@@ -224,10 +196,7 @@ async def extract(
         ]
 
         if missing_fields:
-            partial_data = llm_fallback(
-                raw_text,
-                partial_data
-            )
+            partial_data = llm_fallback(raw_text, partial_data)
 
         try:
             record = ExtractionRecord(**partial_data)
@@ -238,7 +207,7 @@ async def extract(
         record.record_id = file_id
         records.append(record)
         try:
-            saved_id = save_extraction_record(record.model_dump(), file_id)
+            saved_id = save_extraction_record(record.model_dump(), file_id, company_id)
             record.record_id = str(saved_id)
         except Exception as e:
             response_warnings.append(f"record extracted but failed to save to database: {e}")

@@ -3,7 +3,7 @@ Database / save_records.py
 =================================
 Routes a validated ExtractionRecord into the correct resource-specific
 table (electricity_consumption / water_consumption / fuel_consumption)
-based on record.resource_type.
+based on record.resource_type, scoped to the uploading company.
 """
 
 from datetime import date, datetime
@@ -25,7 +25,7 @@ def billing_period_to_dates(period: str | None) -> tuple[date | None, date | Non
         return None, None
 
 
-def save_electricity_record(record: dict, file_id: int) -> int:
+def save_electricity_record(record: dict, file_id: int, company_id: int) -> int:
     start, end = billing_period_to_dates(record.get("billing_period"))
     conn = get_connection()
     try:
@@ -35,8 +35,8 @@ def save_electricity_record(record: dict, file_id: int) -> int:
             INSERT INTO electricity_consumption
                 (site, billing_period_start, billing_period_end,
                  previous_reading_kwh, current_reading_kwh, consumption_kwh,
-                 unit, electricity_cost_lkr, account_no, source_file_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 unit, electricity_cost_lkr, account_no, source_file_id, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING electricity_record_id;
             """,
             (
@@ -44,7 +44,7 @@ def save_electricity_record(record: dict, file_id: int) -> int:
                 record.get("previous_reading"), record.get("current_reading"),
                 record.get("consumption"), record.get("unit"),
                 record.get("amount_lkr"), record.get("account_number"),
-                file_id,
+                file_id, company_id,
             ),
         )
         rec_id = cur.fetchone()[0]
@@ -58,7 +58,7 @@ def save_electricity_record(record: dict, file_id: int) -> int:
         conn.close()
 
 
-def save_water_record(record: dict, file_id: int) -> int:
+def save_water_record(record: dict, file_id: int, company_id: int) -> int:
     start, end = billing_period_to_dates(record.get("billing_period"))
     conn = get_connection()
     try:
@@ -68,8 +68,8 @@ def save_water_record(record: dict, file_id: int) -> int:
             INSERT INTO water_consumption
                 (site, billing_period_start, billing_period_end,
                  previous_reading_m3, current_reading_m3, consumption_m3,
-                 unit, water_cost_lkr, account_no, source_file_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 unit, water_cost_lkr, account_no, source_file_id, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING water_record_id;
             """,
             (
@@ -77,7 +77,7 @@ def save_water_record(record: dict, file_id: int) -> int:
                 record.get("previous_reading"), record.get("current_reading"),
                 record.get("consumption"), record.get("unit"),
                 record.get("amount_lkr"), record.get("account_number"),
-                file_id,
+                file_id, company_id,
             ),
         )
         rec_id = cur.fetchone()[0]
@@ -91,7 +91,7 @@ def save_water_record(record: dict, file_id: int) -> int:
         conn.close()
 
 
-def save_fuel_record(record: dict, file_id: int) -> int:
+def save_fuel_record(record: dict, file_id: int, company_id: int) -> int:
     txn_date = None
     if record.get("transaction_date"):
         try:
@@ -105,13 +105,13 @@ def save_fuel_record(record: dict, file_id: int) -> int:
         cur.execute(
             """
             INSERT INTO fuel_consumption
-                (transaction_date, site, fuel_type, quantity, unit, source_file_id)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (transaction_date, site, fuel_type, quantity, unit, source_file_id, company_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING fuel_record_id;
             """,
             (
                 txn_date, record.get("site"), record.get("fuel_type"),
-                record.get("consumption"), record.get("unit"), file_id,
+                record.get("consumption"), record.get("unit"), file_id, company_id,
             ),
         )
         rec_id = cur.fetchone()[0]
@@ -125,14 +125,14 @@ def save_fuel_record(record: dict, file_id: int) -> int:
         conn.close()
 
 
-def save_extraction_record(record: dict, file_id: int) -> int:
+def save_extraction_record(record: dict, file_id: int, company_id: int) -> int:
     """Dispatches to the right save_*_record() based on resource_type."""
     resource_type = record.get("resource_type")
     if resource_type == "electricity":
-        return save_electricity_record(record, file_id)
+        return save_electricity_record(record, file_id, company_id)
     elif resource_type == "water":
-        return save_water_record(record, file_id)
+        return save_water_record(record, file_id, company_id)
     elif resource_type == "fuel":
-        return save_fuel_record(record, file_id)
+        return save_fuel_record(record, file_id, company_id)
     else:
         raise ValueError(f"Unknown resource_type: {resource_type}")

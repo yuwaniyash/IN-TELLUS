@@ -2,7 +2,8 @@
 Person 2, step 2 — Rule-Based Parsing (the "fast path").
 
 Takes whatever text_extraction.py produced and tries regex/pattern matching
-to pull out: consumption value, unit, billing date/period, account number.
+to pull out: consumption value, unit, billing date/period, account number,
+previous/current meter readings, and total amount due.
 
 IMPORTANT DESIGN RULE: never fail all-or-nothing. If we find 2 out of 4
 fields, return those 2 with the other 2 as None — Person 3 (NLP/IR) and
@@ -59,6 +60,22 @@ DATE_LABEL_PATTERNS = [
     re.compile(r"billing\s*period\D{0,5}(" + r"\d{4}[/-]\d{1,2}(?:[/-]\d{1,2})?" + r")", re.IGNORECASE),
 ]
 
+# Meter reading table rows — matches a date followed by a reading number,
+# e.g. "2026-08-28   5120   32" or "2026-07-27   4780" (no trailing Days
+# column on the older row, since that's typically only shown for the
+# latest reading in a two-row table).
+METER_READING_ROW_PATTERN = re.compile(
+    r"(\d{4}[/-]\d{1,2}[/-]\d{1,2})\s+([\d,]+\.?\d*)\s*(?:\d+)?"
+)
+
+# "Total Due" / "Total with Tax (Rs.)" / "Total Due (Rs.)" — anchored to
+# "Total" + "Due"/"with Tax" so it doesn't accidentally match earlier rows
+# like "Fixed Charge" or "This Month Charge".
+AMOUNT_PATTERNS = [
+    re.compile(r"total\s+due\D{0,15}([\d,]+\.\d{2})", re.IGNORECASE),
+    re.compile(r"total\s+with\s+tax\D{0,15}([\d,]+\.\d{2})", re.IGNORECASE),
+]
+
 
 @dataclass
 class ParsedField:
@@ -73,6 +90,9 @@ class RuleParseResult:
     unit_raw: ParsedField = field(default_factory=ParsedField)     # goes to Person 3's lookup for normalization
     billing_date: ParsedField = field(default_factory=ParsedField)
     account_number: ParsedField = field(default_factory=ParsedField)
+    previous_reading: ParsedField = field(default_factory=ParsedField)
+    current_reading: ParsedField = field(default_factory=ParsedField)
+    amount_lkr: ParsedField = field(default_factory=ParsedField)
     missing_fields: list[str] = field(default_factory=list)
 
 
@@ -82,6 +102,37 @@ def _first_match(patterns: list[re.Pattern], text: str) -> tuple[str, str] | tup
         if m:
             return m.group(1), m.group(0)
     return None, None
+
+
+def _extract_meter_readings(text: str) -> tuple[ParsedField, ParsedField]:
+    """
+    Finds all (date, reading) rows in a meter-reading table and returns
+    (previous_reading, current_reading) as ParsedFields, sorted by date
+    rather than assumed row order — some bill formats list newest-first,
+    others oldest-first.
+    """
+    matches = METER_READING_ROW_PATTERN.findall(text)
+    if len(matches) < 2:
+        return ParsedField(), ParsedField()
+
+    # ISO date strings (yyyy-mm-dd or yyyy/mm/dd) sort correctly as plain
+    # strings, so no need to parse into real date objects here.
+    sorted_rows = sorted(matches, key=lambda row: row[0])
+
+    previous_date, previous_value = sorted_rows[0]
+    current_date, current_value = sorted_rows[-1]
+
+    previous = ParsedField(
+        value=previous_value.replace(",", ""),
+        confidence=0.85,
+        raw_match=f"{previous_date} {previous_value}"
+    )
+    current = ParsedField(
+        value=current_value.replace(",", ""),
+        confidence=0.85,
+        raw_match=f"{current_date} {current_value}"
+    )
+    return previous, current
 
 
 def parse_bill_text(text: str) -> RuleParseResult:
@@ -130,6 +181,20 @@ def parse_bill_text(text: str) -> RuleParseResult:
     else:
         result.missing_fields.append("account_number")
 
+    # Meter readings (previous/current) from the readings table
+    result.previous_reading, result.current_reading = _extract_meter_readings(text)
+    if not result.previous_reading.value:
+        result.missing_fields.append("previous_reading")
+    if not result.current_reading.value:
+        result.missing_fields.append("current_reading")
+
+    # Total amount due
+    value, raw = _first_match(AMOUNT_PATTERNS, text)
+    if value:
+        result.amount_lkr = ParsedField(value=value.replace(",", ""), confidence=0.85, raw_match=raw)
+    else:
+        result.missing_fields.append("amount_lkr")
+
     return result
 
 
@@ -141,7 +206,10 @@ def parse_csv_rows(rows: list[dict]) -> RuleParseResult:
     column names match anything expected.
     """
     if not rows:
-        return RuleParseResult(missing_fields=["consumption", "unit_raw", "billing_date", "account_number"])
+        return RuleParseResult(missing_fields=[
+            "consumption", "unit_raw", "billing_date", "account_number",
+            "previous_reading", "current_reading", "amount_lkr"
+        ])
 
     headers = {h.lower().strip(): h for h in rows[0].keys()}
     result = RuleParseResult()
@@ -180,5 +248,24 @@ def parse_csv_rows(rows: list[dict]) -> RuleParseResult:
             result.unit_raw = ParsedField(value=embedded_unit, confidence=0.7, raw_match=consumption_col)
         else:
             result.missing_fields.append("unit_raw")
+
+    # Previous/current reading columns — column-name match, same spirit as above.
+    prev_col = next((headers[h] for h in headers if "previous" in h and "read" in h), None)
+    if prev_col and row.get(prev_col):
+        result.previous_reading = ParsedField(value=row[prev_col].replace(",", ""), confidence=0.85)
+    else:
+        result.missing_fields.append("previous_reading")
+
+    curr_col = next((headers[h] for h in headers if "current" in h and "read" in h), None)
+    if curr_col and row.get(curr_col):
+        result.current_reading = ParsedField(value=row[curr_col].replace(",", ""), confidence=0.85)
+    else:
+        result.missing_fields.append("current_reading")
+
+    amount_col = next((headers[h] for h in headers if "total" in h or "amount" in h or "cost" in h), None)
+    if amount_col and row.get(amount_col):
+        result.amount_lkr = ParsedField(value=row[amount_col].replace(",", ""), confidence=0.8)
+    else:
+        result.missing_fields.append("amount_lkr")
 
     return result

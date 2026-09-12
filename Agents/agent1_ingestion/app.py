@@ -8,83 +8,58 @@ from .schemas import (
 )
 
 from .llm_fallback import llm_fallback
+from Security_Layer.auth_routes import router as auth_router
+from Security_Layer.auth import get_current_company_id
+from Security_Layer.sites_accounts_routes import router as sites_accounts_router
 from .pipeline import run_extraction_pipeline
 from Database.save_records import save_extraction_record
 from Security_Layer.sanitization import validate_file
 from Security_Layer.file_intake import get_connection, update_processing_status
-from Security_Layer.auth import get_current_company
 import uuid
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 UPLOAD_DIR = REPO_ROOT / "uploads"
 
-
 app = FastAPI(
     title="Agent 1 - Data Extraction",
     version="1.0.0"
 )
+app.include_router(auth_router)
+app.include_router(sites_accounts_router)
 
-def create_raw_file_record(
-    file_name: str,
-    resource_type: str,
-    file_type: str,
-    file_path: str,
-    company_id: int
-) -> int:
+
+def create_raw_file_record(file_name, resource_type, file_type, file_path, company_id):
     conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        INSERT INTO raw_files
-            (file_name, resource_type, file_type, file_path, processing_status, company_id)
-        VALUES
-            (%s, %s, %s, %s, %s, %s)
-        RETURNING file_id;
-        """,
-        (
-            file_name,
-            resource_type,
-            file_type,
-            file_path,
-            "PENDING",
-            company_id
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO raw_files (file_name, resource_type, file_type, file_path, processing_status, company_id)
+               VALUES (%s, %s, %s, %s, 'PENDING', %s) RETURNING file_id;""",
+            (file_name, resource_type, file_type, file_path, company_id)
         )
-    )
+        file_id = cur.fetchone()[0]
+        conn.commit()
+        return file_id
+    finally:
+        cur.close()
+        conn.close()
 
-    file_id = cur.fetchone()[0]
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return file_id
 
 @app.get("/")
 def root():
-    return {
-        "agent": "Agent 1",
-        "status": "running"
-    }
+    return {"agent": "Agent 1", "status": "running"}
 
 
 @app.get("/health")
 def health():
-    return {
-        "status": "healthy"
-    }
+    return {"status": "healthy"}
 
 
 @app.post("/extract", response_model=ExtractionResponse)
 async def extract(
     file: UploadFile = File(...),
-    company_id: int = Depends(get_current_company)
+    company_id: int = Depends(get_current_company_id),
 ):
-
-    # =======================================================
-    # PERSON 1
-    # File validation + saving
-    # =======================================================
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
@@ -98,7 +73,6 @@ async def extract(
         )
 
     file_type = suffix.replace(".", "")
-
     contents = await file.read()
 
     is_valid, reason = validate_file(contents, file.filename)
@@ -106,24 +80,13 @@ async def extract(
         raise HTTPException(status_code=400, detail=reason)
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
     unique_filename = f"{uuid.uuid4()}{suffix}"
     saved_path = UPLOAD_DIR / unique_filename
     saved_path.write_bytes(contents)
-
     relative_file_path = str(saved_path.relative_to(REPO_ROOT))
 
-    # =======================================================
-    # PERSON 2 + PERSON 3
-    # Text extraction, rule-based parsing, unit lookup
-    # =======================================================
-
     try:
-        raw_text, partial_data_list = run_extraction_pipeline(
-            relative_file_path,
-            file_type,
-            company_id
-        )
+        raw_text, partial_data_list = run_extraction_pipeline(str(saved_path), file_type, company_id)
 
         resource_types = {
             data.get("resource_type")
@@ -132,9 +95,7 @@ async def extract(
         }
 
         if not resource_types:
-            raise ValueError(
-                "Could not determine resource type from the uploaded file."
-            )
+            raise ValueError("Could not determine resource type from the uploaded file.")
 
         resource_type = next(iter(resource_types))
 
@@ -151,15 +112,8 @@ async def extract(
     except Exception as e:
         raise HTTPException(
             status_code=422,
-            detail={
-                "message": "Extraction pipeline failed",
-                "error": str(e)
-            }
+            detail={"message": "Extraction pipeline failed", "error": str(e)}
         )
-
-    # =======================================================
-    # PER-RECORD: REQUIRED FIELDS CHECK -> LLM FALLBACK -> VALIDATION
-    # =======================================================
 
     required_fields = [
         "resource_type",
@@ -189,11 +143,7 @@ async def extract(
             else required_fields
         )
 
-        missing_fields = [
-            field
-            for field in fields_to_check
-            if not partial_data.get(field)
-        ]
+        missing_fields = [f for f in fields_to_check if not partial_data.get(f)]
 
         if missing_fields:
             partial_data = llm_fallback(raw_text, partial_data)
@@ -219,9 +169,6 @@ async def extract(
             detail={"message": "No records could be extracted or validated from this file."}
         )
 
-    # =======================================================
-    # RETURN CLEAN STRUCTURED DATA
-    # =======================================================
     update_processing_status(file_id, "COMPLETED")
     return ExtractionResponse(
         success=True,

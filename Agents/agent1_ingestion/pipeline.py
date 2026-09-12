@@ -30,6 +30,7 @@ from .text_extraction import extract_text
 from .rule_parser import parse_bill_text, parse_csv_rows, RuleParseResult
 from .unit_lookup import lookup_unit
 from .fuel_csv_parser import parse_fuel_transaction_csv, FuelTransaction
+from Security_Layer.file_intake import get_connection
 
 # Canonical unit (from Person 3's lookup_unit) -> resource_type.
 # Extend as Person 3 adds more units (e.g. a "diesel"/"petrol" canonical
@@ -68,17 +69,33 @@ def normalize_billing_period(raw_date: str | None) -> str | None:
         return None
 
 
-def resolve_site(account_no: str | None, warnings: list[str]) -> str | None:
-    if account_no and account_no in SITE_LOOKUP:
-        return SITE_LOOKUP[account_no]
-    warnings.append(
-        f"no site mapping for account '{account_no}'" if account_no
-        else "account number not found"
-    )
-    return None
+def resolve_site(account_no: str | None, company_id: int, warnings: list[str]) -> str | None:
+    if not account_no:
+        warnings.append("account number not found")
+        return None
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT sites.site_name
+               FROM accounts
+               JOIN sites ON accounts.site_id = sites.site_id
+               WHERE accounts.account_number = %s
+                 AND accounts.company_id = %s;""",
+            (account_no, company_id)
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0]
+        warnings.append(f"no site mapping for account '{account_no}'")
+        return None
+    finally:
+        cur.close()
+        conn.close()
 
 
-def rule_result_to_partial_data(result: RuleParseResult) -> dict:
+def rule_result_to_partial_data(result: RuleParseResult, company_id: int) -> dict:
     """Converts Person 2's RuleParseResult + Person 3's unit lookup into
     the partial_data dict shape app.py's ExtractionRecord expects."""
     warnings = [f"{f} not found by rule-based parser" for f in result.missing_fields]
@@ -116,7 +133,7 @@ def rule_result_to_partial_data(result: RuleParseResult) -> dict:
         warnings.append(f"could not normalize billing date '{result.billing_date.value}'")
 
     # --- site (via account number lookup) ---
-    site = resolve_site(result.account_number.value, warnings)
+    site = resolve_site(result.account_number.value, company_id, warnings)
 
     if not resource_type:
         warnings.append("resource_type could not be determined from unit")
@@ -202,7 +219,7 @@ def fuel_transaction_to_partial_data(txn: FuelTransaction) -> dict:
     }
 
 
-def run_extraction_pipeline(file_path: str, file_type: str) -> tuple[str, list[dict]]:
+def run_extraction_pipeline(file_path: str, file_type: str, company_id: int) -> tuple[str, list[dict]]:
     """
     Full Person 2 + Person 3 pipeline: a file already on disk -> a list of
     partial_data dicts ready for app.py's required-fields check + LLM
@@ -226,7 +243,7 @@ def run_extraction_pipeline(file_path: str, file_type: str) -> tuple[str, list[d
     if isinstance(extracted, str):
         raw_text = extracted
         result = parse_bill_text(extracted)
-        return raw_text, [rule_result_to_partial_data(result)]
+        return raw_text, [rule_result_to_partial_data(result, company_id)]
 
     if is_fuel_transaction_log(extracted):
         transactions = parse_fuel_transaction_csv(extracted)
@@ -235,4 +252,4 @@ def run_extraction_pipeline(file_path: str, file_type: str) -> tuple[str, list[d
 
     raw_text = str(extracted[:3])
     result = parse_csv_rows(extracted)
-    return raw_text, [rule_result_to_partial_data(result)]
+    return raw_text, [rule_result_to_partial_data(result, company_id)]

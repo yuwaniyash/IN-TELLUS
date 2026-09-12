@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 
 from .schemas import (
     ExtractionRecord,
@@ -8,54 +8,42 @@ from .schemas import (
 )
 
 from .llm_fallback import llm_fallback
+from Security_Layer.auth_routes import router as auth_router
+from Security_Layer.auth import get_current_company_id
+
 from .pipeline import run_extraction_pipeline
 from Database.save_records import save_extraction_record
 from Security_Layer.sanitization import validate_file
 from Security_Layer.file_intake import get_connection, update_processing_status
 import uuid
 
+
 # Matches text_extraction.py's UPLOAD_ROOT (repo root) and file_path
 # convention (relative to repo root).
 REPO_ROOT = Path(__file__).parent.parent.parent
 UPLOAD_DIR = REPO_ROOT / "uploads"
 
-
 app = FastAPI(
     title="Agent 1 - Data Extraction",
     version="1.0.0"
 )
+app.include_router(auth_router)
 
-def create_raw_file_record(
-    file_name: str,
-    resource_type: str,
-    file_type: str,
-    file_path: str
-) -> int:
+def create_raw_file_record(file_name, resource_type, file_type, file_path, company_id):
     conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        INSERT INTO raw_files
-            (file_name, resource_type, file_type, file_path, processing_status)
-        VALUES
-            (%s, %s, %s, %s, %s)
-        RETURNING file_id;
-        """,
-        (
-            file_name,
-            resource_type,
-            file_type,
-            file_path,
-            "PENDING"
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO raw_files (file_name, resource_type, file_type, file_path, processing_status, company_id)
+               VALUES (%s, %s, %s, %s, 'PENDING', %s) RETURNING file_id;""",
+            (file_name, resource_type, file_type, file_path, company_id)
         )
-    )
-
-    file_id = cur.fetchone()[0]
-
-    conn.commit()
-    cur.close()
-    conn.close()
+        file_id = cur.fetchone()[0]
+        conn.commit()
+        return file_id
+    finally:
+        cur.close()
+        conn.close()
 
     return file_id
 
@@ -74,9 +62,10 @@ def health():
     }
 
 
-@app.post("/extract", response_model=ExtractionResponse)
+@app.post("/extract")
 async def extract(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    company_id: int = Depends(get_current_company_id),
 ):
 
     # =======================================================
@@ -134,11 +123,7 @@ async def extract(
     # =======================================================
 
     try:
-        raw_text, partial_data_list = run_extraction_pipeline(
-            relative_file_path,
-            file_type
-        )
-
+        raw_text, partial_data_list = run_extraction_pipeline(str(saved_path), file_type, company_id)
         # Resource type is determined by the extraction pipeline.
         resource_types = {
             data.get("resource_type")
@@ -159,7 +144,8 @@ async def extract(
             file_name=file.filename,
             resource_type=resource_type,
             file_type=file_type,
-            file_path=relative_file_path
+            file_path=relative_file_path,
+            company_id=company_id
         )
 
         # Extraction is now actively being processed.

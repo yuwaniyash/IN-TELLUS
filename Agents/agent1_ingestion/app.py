@@ -10,7 +10,7 @@ from .schemas import (
 from .llm_fallback import llm_fallback
 from Security_Layer.auth_routes import router as auth_router
 from Security_Layer.auth import get_current_company_id
-
+from Security_Layer.sites_accounts_routes import router as sites_accounts_router
 from .pipeline import run_extraction_pipeline
 from Database.save_records import save_extraction_record
 from Security_Layer.sanitization import validate_file
@@ -25,6 +25,7 @@ app = FastAPI(
     version="1.0.0"
 )
 app.include_router(auth_router)
+app.include_router(sites_accounts_router)
 
 
 def create_raw_file_record(file_name, resource_type, file_type, file_path, company_id):

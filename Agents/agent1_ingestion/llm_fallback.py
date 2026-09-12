@@ -9,7 +9,11 @@ from .schemas import ExtractionRecord
 load_dotenv()
 
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-_model = genai.GenerativeModel("gemini-2.5-flash")
+
+# Configurable via .env so a future model deprecation is a config change,
+# not a code change — see GEMINI_MODEL_NAME in .env.
+MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME", "gemini-3.5-flash-lite")
+_model = genai.GenerativeModel(MODEL_NAME)
 
 
 def build_fallback_prompt(raw_text: str, partial_data: dict) -> str:
@@ -113,20 +117,31 @@ def llm_fallback(
                 recovered_count += 1
 
     # Optional fields: fill in if present and not already set.
+    # Tracked separately from required fields so a record that only needed
+    # an optional field recovered (e.g. amount_lkr) doesn't get mislabeled
+    # "llm_fallback_failed" just because no required field needed recovery.
+    optional_recovered_count = 0
+    optional_checked_count = 0
+
     for field in ["fuel_type", "account_number", "previous_reading",
                    "current_reading", "amount_lkr"]:
         if not merged.get(field):
+            optional_checked_count += 1
             value = recovered.get(field)
             if value not in (None, "", "null"):
                 merged[field] = value
+                optional_recovered_count += 1
 
-    confidence = round(recovered_count / checked_count, 2) if checked_count else 1.0
+    total_recovered = recovered_count + optional_recovered_count
+    total_checked = checked_count + optional_checked_count
+
+    confidence = round(total_recovered / total_checked, 2) if total_checked else 1.0
     still_missing = [
         f for f in required_fields
         if merged.get(f) in (None, "", "unknown")
     ]
 
-    merged["extraction_method"] = "llm_fallback" if recovered_count > 0 else "llm_fallback_failed"
+    merged["extraction_method"] = "llm_fallback" if total_recovered > 0 else "llm_fallback_failed"
     merged["confidence"] = confidence
     merged["warnings"] = partial_data.get("warnings", []) + (
         [f"LLM fallback could not recover: {still_missing}"] if still_missing else []

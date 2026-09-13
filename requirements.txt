@@ -19,3 +19,6 @@ pdfplumber==0.11.4
 thefuzz
 python-Levenshtein
 python-dateutil
+passlib[bcrypt]
+ python-jose[cryptography]
+ bcrypt==4.0.1

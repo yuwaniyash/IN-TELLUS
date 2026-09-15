@@ -1,0 +1,76 @@
+{
+  "_meta": {
+    "description": "Emission factor reference table for Agent 2 (Analysis). Values are published, cited figures — not placeholders. Update the 'as_of' fields as newer official data is released.",
+    "currency_note": "All factors are kg CO2e per stated unit unless noted otherwise.",
+    "last_reviewed": "2026-09-11"
+  },
+
+  "electricity": {
+    "grid_default": {
+      "region": "Sri Lanka (national grid, CEB)",
+      "factor_kg_co2_per_kwh": 0.6482,
+      "methodology": "Combined Margin (Operating Margin + Build Margin), CDM 'Tool to calculate the emission factor for an electricity system' v02.2.1",
+      "source": "Sri Lanka Sustainable Energy Authority / Ministry of Power & Energy, Energy Balance 2022",
+      "source_url": "https://www.energy.gov.lk/images/energy-balance/energy-balance-2022.pdf",
+      "as_of": "2022",
+      "alt_factors": {
+        "simple_operating_margin_kg_co2_per_kwh": 0.7123,
+        "build_margin_kg_co2_per_kwh": 0.5841
+      },
+      "notes": "Combined Margin is the figure conventionally used for consumption-side (Scope 2, location-based) reporting. Simple Operating Margin is provided as an alternative if the report needs to lean conservative (higher estimate)."
+    }
+  },
+
+  "fuel": {
+    "diesel": {
+      "factor_kg_co2e_per_litre": 2.68,
+      "source": "GHG Protocol / UK DEFRA conversion factors (standard road diesel, average biofuel blend)",
+      "as_of": "2024",
+      "scope_default": 1
+    },
+    "petrol": {
+      "aliases": ["gasoline", "unleaded"],
+      "factor_kg_co2e_per_litre": 2.31,
+      "source": "GHG Protocol / UK DEFRA conversion factors (average biofuel blend petrol)",
+      "as_of": "2024",
+      "scope_default": 1
+    },
+    "lpg": {
+      "aliases": ["liquefied_petroleum_gas", "cooking_gas"],
+      "factor_kg_co2e_per_kg": 2.983,
+      "factor_kg_co2e_per_litre": 1.51,
+      "source": "GHG Protocol / UK DEFRA conversion factors",
+      "as_of": "2024",
+      "scope_default": 1
+    },
+    "kerosene": {
+      "factor_kg_co2e_per_litre": 2.52,
+      "source": "GHG Protocol / UK DEFRA conversion factors (burning oil)",
+      "as_of": "2024",
+      "scope_default": 1
+    },
+    "furnace_oil": {
+      "aliases": ["fuel_oil", "heavy_fuel_oil"],
+      "factor_kg_co2e_per_litre": 3.15,
+      "source": "GHG Protocol / UK DEFRA conversion factors (fuel oil)",
+      "as_of": "2024",
+      "scope_default": 1
+    },
+    "natural_gas": {
+      "factor_kg_co2e_per_m3": 2.02,
+      "source": "GHG Protocol / UK DEFRA conversion factors",
+      "as_of": "2024",
+      "scope_default": 1
+    }
+  },
+
+  "water": {
+    "supply_and_treatment": {
+      "factor_kg_co2e_per_m3": 0.344,
+      "source": "UK Water/DEFRA average supply+treatment factor (international proxy — no Sri Lanka-specific published figure found)",
+      "as_of": "2024",
+      "scope_default": null,
+      "notes": "Water is NOT part of standard GHG Protocol Scope 1/2/3 boundaries for a typical mid-sized company. This factor is included for informational/context reporting only (e.g. resource-efficiency commentary) and is EXCLUDED from the Scope 1/2/3 footprint total by default. Do not sum into co2e totals unless explicitly enabled."
+    }
+  }
+}

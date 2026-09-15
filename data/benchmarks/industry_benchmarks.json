@@ -1,0 +1,37 @@
+{
+  "_meta": {
+    "description": "Industry electricity-intensity benchmarks (kWh per m2 of floor area per year) for Person 4's IR component. No Sri Lanka-specific published benchmark table was found — these are international figures, flagged accordingly. Use for DIRECTIONAL context only ('you use roughly Nx the median for this building type'), not as a compliance or regulatory yardstick.",
+    "last_reviewed": "2026-09-12"
+  },
+  "sectors": {
+    "office": {
+      "electricity_kwh_per_m2_per_year_median": 166,
+      "low": 128,
+      "high": 218,
+      "source": "General commercial office-building EUI benchmark range, widely cited in building-energy-efficiency literature (e.g. ClevAir energy-benchmarking overview).",
+      "region": "international (not Sri Lanka-specific)"
+    },
+    "retail_hospitality": {
+      "electricity_kwh_per_m2_per_year_median": 168,
+      "low": null,
+      "high": null,
+      "source": "UK Government ND-NEED 2024 dataset (2022 metered use, England & Wales) — official statistics.",
+      "region": "UK (not Sri Lanka-specific)"
+    },
+    "factory_industrial": {
+      "electricity_kwh_per_m2_per_year_median": 28,
+      "low": null,
+      "high": null,
+      "source": "UK Government ND-NEED 2024 dataset (2022 metered use, England & Wales) — official statistics.",
+      "region": "UK (not Sri Lanka-specific)",
+      "notes": "Low per-m2 figure reflects large industrial floor areas relative to load, not low total consumption."
+    },
+    "warehouse": {
+      "electricity_kwh_per_m2_per_year_median": 71,
+      "low": null,
+      "high": null,
+      "source": "Derived from US EIA CBECS survey figures (~90,000 kWh/year for a ~1,273 m2 warehouse).",
+      "region": "US (not Sri Lanka-specific)"
+    }
+  }
+}

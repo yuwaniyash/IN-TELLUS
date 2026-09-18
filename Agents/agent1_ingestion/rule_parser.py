@@ -72,8 +72,18 @@ METER_READING_ROW_PATTERN = re.compile(
 # "Total" + "Due"/"with Tax" so it doesn't accidentally match earlier rows
 # like "Fixed Charge" or "This Month Charge".
 AMOUNT_PATTERNS = [
-    re.compile(r"total\s+due\D{0,15}([\d,]+\.\d{2})", re.IGNORECASE),
+    # Prioritize this: appears standalone near the bottom of the bill,
+    # not inside a horizontal summary-box row (Previous Due / Payments /
+    # ... / Total Due) where pdfplumber's line-based text extraction
+    # puts all labels on one line and all values on the next — causing
+    # "Total Due" to incorrectly grab the FIRST value in that row
+    # (Previous Due's amount) rather than its own.
+    re.compile(r"total\s+amount\s+due\D{0,20}(?:lkr\s*)?([\d,]+\.\d{2})", re.IGNORECASE),
     re.compile(r"total\s+with\s+tax\D{0,15}([\d,]+\.\d{2})", re.IGNORECASE),
+    # Last resort — unreliable in box-grid layouts, kept only for bill
+    # formats where "Total Due" appears as an isolated line, not a
+    # multi-box summary row.
+    re.compile(r"total\s+due\D{0,15}([\d,]+\.\d{2})", re.IGNORECASE),
 ]
 
 

@@ -22,3 +22,6 @@ python-dateutil
 passlib[bcrypt]
  python-jose[cryptography]
  bcrypt==4.0.1
+langchain-google-genai
+langchain-postgres
+langchain-text-splitters

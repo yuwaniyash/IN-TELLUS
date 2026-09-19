@@ -1,0 +1,9 @@
+﻿Variable-speed drives (VSDs), including variable-frequency drives (VFDs), allow the operating speed of suitable motor-driven equipment to be adjusted according to the required load. They are commonly considered for pumps, fans, compressors, and other applications where flow, pressure, or output requirements vary over time.
+
+A VSD can reduce the need to control a fixed-speed motor by mechanical throttling or other less efficient methods. The potential benefit depends strongly on the equipment type, load profile, operating hours, control requirements, and existing system design.
+
+Facilities should assess the complete motor-driven system before installing a VSD. The assessment should consider the motor, driven equipment, control method, minimum and maximum operating conditions, electrical compatibility, and maintenance requirements.
+
+VSD installation is therefore a site-specific engineering intervention. It should be considered where variable demand exists and where speed control can provide an appropriate method of matching equipment output to actual requirements.
+
+Source basis: U.S. Department of Energy guidance on variable-speed drives, pumps, fans, and motor systems.

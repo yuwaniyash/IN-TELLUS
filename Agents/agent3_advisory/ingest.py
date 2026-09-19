@@ -26,6 +26,7 @@ vectorstore = PGVector(
     collection_name=COLLECTION_NAME,
     connection=CONNECTION_STRING,
     use_jsonb=True,
+    pre_delete_collection=True,
 )
 
 splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
@@ -44,6 +45,52 @@ SOURCE_OVERRIDES = {
         "document_title": "National Green Reporting System (NGRS) - Revised Reporting Guidelines",
         "year": 2026,
         "source_type": "official_guideline",
+    },
+    "slframework_03_ngrs_overview": {
+        "authority": "Ministry of Environment, Sri Lanka",
+        "document_type": "supplementary_summary",
+        "document_title": "National Green Reporting System (NGRS) - Revised Reporting Guidelines",
+        "year": 2026,
+        "source_type": "supplementary",
+        "source_basis": "official_guideline",
+    },
+    "slframework_04_ngrs_data_and_reporting": {
+        "authority": "Ministry of Environment, Sri Lanka",
+        "document_type": "supplementary_summary",
+        "document_title": "National Green Reporting System (NGRS) - Revised Reporting Guidelines",
+        "year": 2026,
+        "source_type": "supplementary",
+        "source_basis": "official_guideline",
+    },
+    "slframework_05_national_energy_policy": {
+        "authority": "Government of Sri Lanka",
+        "document_type": "supplementary_summary",
+        "document_title": "National Energy Policy and Strategies",
+        "year": 2019,
+        "source_type": "supplementary",
+        "source_basis": "official_policy",
+    },
+    "slframework_06_energy_efficiency_building_code": {
+        "authority": "Sri Lanka Sustainable Energy Authority",
+        "document_type": "supplementary_summary",
+        "document_title": "Energy Efficiency Building Code of Sri Lanka",
+        "year": 2021,
+        "source_type": "supplementary",
+        "source_basis": "official_code",
+    },
+    "slframework_07_rooftop_solar_requirements": {
+        "authority": "Sri Lanka Sustainable Energy Authority",
+        "document_type": "supplementary_summary",
+        "document_title": "Rooftop Solar PV Programme and Guidelines",
+        "source_type": "supplementary",
+        "source_basis": "official_guideline",
+    },
+    "slframework_08_energy_labelling_and_standards": {
+        "authority": "Sri Lanka Sustainable Energy Authority",
+        "document_type": "supplementary_summary",
+        "document_title": "Energy Performance Standards and Energy Labelling Programme",
+        "source_type": "supplementary",
+        "source_basis": "official_guidance",
     },
 }
 

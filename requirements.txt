@@ -20,5 +20,9 @@ thefuzz
 python-Levenshtein
 python-dateutil
 passlib[bcrypt]
- python-jose[cryptography]
- bcrypt==4.0.1
+python-jose[cryptography]
+bcrypt==4.0.1
+langchain
+langchain-postgres
+langchain-google-genai
+pydantic

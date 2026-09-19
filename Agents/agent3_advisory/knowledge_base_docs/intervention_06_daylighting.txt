@@ -1,0 +1,7 @@
+﻿Daylighting uses natural light from windows, skylights, clerestories, or other building openings to reduce the need for electric lighting during suitable daytime periods. A well-designed daylighting system should provide useful illumination while controlling glare and unwanted solar heat gain. Daylighting is particularly relevant in spaces with suitable window orientation, sufficient daylight availability, and regular daytime occupancy.
+
+Lighting controls such as photosensors, dimming systems, or automatic switching can be combined with daylighting so that electric lights respond to the amount of available natural light. Facilities should assess whether daylight is distributed adequately throughout the occupied space before reducing electric lighting levels.
+
+Daylighting should be evaluated together with the building's cooling requirements because additional direct solar heat gain can increase cooling demand. The appropriate design therefore depends on window arrangement, shading, orientation, occupancy, lighting requirements, and local climate conditions.
+
+Source basis: U.S. Department of Energy guidance on lighting and daylighting.

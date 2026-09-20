@@ -10,7 +10,7 @@ all was available, not "only a little."
 """
 
 from dataclasses import dataclass, field
-from Agents.agent3_advisory.schemas import Agent3Input, Anomaly
+from schema import Agent3Input, Anomaly
 
 
 @dataclass

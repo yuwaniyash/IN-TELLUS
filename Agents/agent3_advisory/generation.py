@@ -15,7 +15,7 @@ from langchain_postgres import PGVector
 from langchain_core.prompts import ChatPromptTemplate
 
 # Adjust this import path to wherever schema.py actually lives relative to this file.
-from schema import ActionPlanItem, SourceCitation, RecommendationTier
+from schemas import ActionPlanItem, SourceCitation, RecommendationTier
 
 load_dotenv()
 

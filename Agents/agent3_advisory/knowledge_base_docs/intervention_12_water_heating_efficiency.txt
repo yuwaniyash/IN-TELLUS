@@ -1,0 +1,9 @@
+﻿Water heating can be an important energy use in facilities that require hot water for sanitation, cleaning, food preparation, accommodation, or industrial processes. Energy losses can occur through hot-water storage, distribution piping, unnecessary circulation, and inefficient heating equipment.
+
+Facilities should inspect hot-water storage tanks, distribution pipes, valves, and circulation systems for unnecessary heat loss. Insulating appropriate hot-water tanks and pipes can reduce heat loss from the system. Where suitable, hot-water demand can also be reduced through efficient fixtures and process improvements.
+
+Water-heater temperature settings should be selected according to the actual application and applicable health, safety, and process requirements. Settings should not be reduced below levels required for hygiene, process performance, or other safety requirements.
+
+Facilities with intermittent hot-water demand can investigate whether controls or demand-based operation are appropriate instead of continuously maintaining hot water when it is not required.
+
+Source basis: general energy-efficiency practice; site-specific water-heating requirements should be assessed by qualified personnel.

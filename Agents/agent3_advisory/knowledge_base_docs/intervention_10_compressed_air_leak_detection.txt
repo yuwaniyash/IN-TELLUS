@@ -1,0 +1,9 @@
+﻿Compressed-air systems can lose energy through leaks in hoses, fittings, couplings, valves, pipe joints, and other components. Because compressors may continue operating to maintain system pressure, leaks can increase compressor operating time and unnecessary energy consumption.
+
+Facilities should establish a regular inspection and leak-repair process. Audible inspection can identify some leaks, while ultrasonic leak-detection equipment can help locate smaller leaks in noisy industrial environments. Common leak locations include hose connections, fittings, regulators, valves, and pipe joints.
+
+Leak management should be combined with a review of system pressure and end uses. Operating pressure should be appropriate for the equipment that actually requires compressed air, and inappropriate uses of compressed air should be identified where possible.
+
+Compressed-air leak detection is generally an operations-and-maintenance intervention and should be prioritized according to the size and persistence of identified leaks.
+
+Source basis: U.S. Department of Energy compressed-air system guidance.

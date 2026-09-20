@@ -1,0 +1,7 @@
+﻿HVAC setpoint scheduling adjusts heating or cooling operation according to actual building occupancy and operating hours. Facilities can use programmable controls or building management systems to reduce HVAC operation during periods when spaces are unoccupied, such as nights, weekends, holidays, or planned shutdown periods.
+
+Before changing schedules, facilities should document actual occupancy patterns and required operating periods. The schedule should allow sufficient time for the HVAC system to bring occupied spaces to the required conditions before normal activities begin.
+
+Setpoint changes should not compromise occupant comfort, equipment protection, indoor environmental requirements, or processes that require continuous temperature control. Facilities should monitor the results after changing schedules and adjust the settings when operational problems occur.
+
+Source basis: U.S. Department of Energy facility energy-management guidance.

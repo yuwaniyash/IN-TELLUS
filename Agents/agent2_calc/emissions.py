@@ -17,6 +17,7 @@ Design goals (per the project's "no black box" Responsible AI stance):
 """
 
 from __future__ import annotations
+from decimal import Decimal
 
 import json
 from dataclasses import dataclass, field, asdict
@@ -110,6 +111,9 @@ def compute_emissions(record: dict, factors: dict = None) -> EmissionResult:
     site = record.get("site")
     billing_period = record.get("billing_period")
     consumption = record.get("consumption")
+
+    if isinstance(consumption, Decimal):
+        consumption = float(consumption)
     unit = record.get("unit")
 
     errors = []

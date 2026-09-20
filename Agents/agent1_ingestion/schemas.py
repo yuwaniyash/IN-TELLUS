@@ -18,10 +18,6 @@ class ExtractionRecord(BaseModel):
 
     billing_period: Optional[str] = None
 
-    # Exact transaction date (YYYY-MM-DD), populated for individual fuel
-    # transactions where billing_period (month-level) alone would lose
-    # day-level detail. None for bill-based records, where billing_period
-    # is the meaningful unit.
     transaction_date: Optional[str] = None
 
     site: Optional[str] = None
@@ -51,6 +47,11 @@ class ExtractionRecord(BaseModel):
 
 class ExtractionResponse(BaseModel):
     success: bool
+
+    # The raw_files.file_id this extraction was saved under -- Agent 2's
+    # POST /analyze takes exactly this value. Without it, the frontend has
+    # no way to tell Agent 2 which file's records to analyze.
+    file_id: int
 
     records: List[ExtractionRecord]
 

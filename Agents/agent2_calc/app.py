@@ -32,6 +32,20 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# CORS: this is a SEPARATE FastAPI app/process from Agent 1 (different
+# port), so it needs its own CORS middleware -- Agent 1's doesn't cover
+# it. Same reasoning as Agent 1's app.py: any request carrying a custom
+# header (Authorization: Bearer <token>) triggers a browser preflight
+# OPTIONS request first, which fails without this.
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/")
 def root():
@@ -72,9 +86,6 @@ def analyze(
     )
 
     if outcome["errors"]:
-        # file not found / not owned by this company / no records —
-        # all legitimate 404s, not 500s, and none of them expose whether
-        # the file_id belongs to a DIFFERENT company (see get_file_metadata).
         raise HTTPException(
             status_code=404,
             detail={"message": "Analysis could not be completed", "errors": outcome["errors"]},
@@ -83,6 +94,6 @@ def analyze(
     try:
         update_processing_status(request.file_id, "ANALYZED")
     except Exception:
-        pass  # best-effort status update only; the analysis result itself is unaffected
+        pass
 
     return AnalyzeResponse(success=True, result=outcome["result"], warnings=[])

@@ -24,6 +24,23 @@ app = FastAPI(
     title="Agent 1 - Data Extraction",
     version="1.0.0"
 )
+
+# CORS: required because the React frontend (localhost:5173) calls this
+# API (localhost:8001) from a different origin. Any request carrying a
+# custom header -- like Authorization: Bearer <token> -- triggers a
+# browser CORS "preflight" OPTIONS request first. Without this
+# middleware, FastAPI has no OPTIONS handler for these routes at all and
+# rejects the preflight with 405, which then surfaces in the browser as
+# a generic failed request on the REAL call that never even gets sent.
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(auth_router)
 app.include_router(sites_accounts_router)
 
@@ -115,15 +132,23 @@ async def extract(
             detail={"message": "Extraction pipeline failed", "error": str(e)}
         )
 
+    # previous_reading, current_reading, and amount_lkr are genuinely
+    # optional for bills -- consumption is what emissions calculations
+    # actually need, and many real bill layouts simply don't have all
+    # three of these in an extractable form. Requiring them forced every
+    # such bill through the full LLM fallback for no real benefit.
+    #
+    # "site" is deliberately NOT in this list. A missing site should
+    # never trigger an LLM guess -- it's already correctly surfaced by
+    # resolve_site()'s "no site mapping" warning and handled by the
+    # frontend's dedicated account-confirmation flow. Guessing it here
+    # would silently reintroduce exactly the text-scraping approach this
+    # project moved away from in favor of account-number-based lookup.
     required_fields = [
         "resource_type",
         "consumption",
         "unit",
         "billing_period",
-        "site",
-        "previous_reading",
-        "current_reading",
-        "amount_lkr"
     ]
     required_fields_fuel = [
         "resource_type",
@@ -172,6 +197,7 @@ async def extract(
     update_processing_status(file_id, "COMPLETED")
     return ExtractionResponse(
         success=True,
+        file_id=file_id,
         records=records,
         source_file=file.filename,
         warnings=response_warnings

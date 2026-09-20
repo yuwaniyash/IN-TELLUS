@@ -169,7 +169,13 @@ def get_historical_monthly_series(company_id: int, site: str, resource_type: str
         else:
             raise ValueError(f"Unknown resource_type: {resource_type}")
 
-        return [{"period": row[0], "value": float(row[1]), "site": site} for row in cur.fetchall()]
+        rows = cur.fetchall()
+
+        return [
+            {"period": row[0], "value": float(row[1]), "site": site}
+            for row in rows
+            if row[1] is not None
+        ]
     finally:
         cur.close()
         conn.close()

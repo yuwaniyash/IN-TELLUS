@@ -10,8 +10,6 @@ load_dotenv()
 
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
-# Configurable via .env so a future model deprecation is a config change,
-# not a code change — see GEMINI_MODEL_NAME in .env.
 MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME", "gemini-3.5-flash-lite")
 _model = genai.GenerativeModel(MODEL_NAME)
 
@@ -31,7 +29,6 @@ Required fields:
 - consumption
 - unit
 - billing_period
-- site
 
 Optional fields:
 - fuel_type
@@ -51,9 +48,11 @@ Rules:
   water -> m3
   fuel -> litres
 - Account numbers should be masked if necessary.
-- site refers to the physical location/branch/area office
-  (e.g. "Area Office"), NOT the customer's personal mailing
-  address unless no other location is given.
+- Do NOT return a "site" field. Site is resolved separately from the
+  company's own account-to-site mapping, never from bill text -- a
+  guessed site name has no real site_id behind it and would be shown
+  as if confirmed when it isn't. If this field appears in your output
+  it will be ignored.
 
 Partial information already extracted:
 
@@ -77,9 +76,13 @@ def llm_fallback(
 
     print("LLM FALLBACK TRIGGERED")
 
+    # "site" is deliberately excluded here -- see the prompt's note above.
+    # Site must only ever come from a confirmed account->site mapping
+    # (resolve_site() in pipeline.py), never from an LLM guess at bill
+    # text, since a guessed name has no real site_id and would display
+    # as if it were a confirmed mapping when it isn't.
     required_fields = [
-        "resource_type", "consumption", "unit",
-        "billing_period", "site"
+        "resource_type", "consumption", "unit", "billing_period"
     ]
     fields_before = {
         field: partial_data.get(field) for field in required_fields
@@ -107,8 +110,6 @@ def llm_fallback(
     checked_count = 0
 
     for field in required_fields:
-        # Only overwrite fields that were actually missing before —
-        # never let the LLM clobber a value rule-based parsing already found.
         if fields_before[field] in (None, "", "unknown"):
             checked_count += 1
             value = recovered.get(field)
@@ -116,10 +117,6 @@ def llm_fallback(
                 merged[field] = value
                 recovered_count += 1
 
-    # Optional fields: fill in if present and not already set.
-    # Tracked separately from required fields so a record that only needed
-    # an optional field recovered (e.g. amount_lkr) doesn't get mislabeled
-    # "llm_fallback_failed" just because no required field needed recovery.
     optional_recovered_count = 0
     optional_checked_count = 0
 
@@ -146,5 +143,11 @@ def llm_fallback(
     merged["warnings"] = partial_data.get("warnings", []) + (
         [f"LLM fallback could not recover: {still_missing}"] if still_missing else []
     )
+
+    # Belt-and-suspenders: even if the model ignores the prompt instruction
+    # and returns a "site" key anyway, never let it end up in the merged
+    # result -- site only ever comes from resolve_site().
+    merged.pop("site", None)
+    merged["site"] = partial_data.get("site")
 
     return merged

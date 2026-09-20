@@ -24,6 +24,7 @@ Design goals (same "no black box" stance as Persons 1 & 2):
 """
 
 from __future__ import annotations
+from decimal import Decimal
 
 import json
 from pathlib import Path
@@ -83,6 +84,7 @@ def size_renewable_system(
     cost_per_kw_lkr: Optional[float] = None,
     feed_in_tariff_lkr_per_kwh: Optional[float] = None,
     reference: Optional[dict] = None,
+    
 ) -> dict:
     """
     Two modes, chosen by which argument is supplied:
@@ -99,6 +101,8 @@ def size_renewable_system(
     reference = reference if reference is not None else load_solar_reference()
     errors = []
     warnings = []
+    if isinstance(annual_consumption_kwh, Decimal):
+        annual_consumption_kwh = float(annual_consumption_kwh)
 
     if annual_consumption_kwh is None or not isinstance(annual_consumption_kwh, (int, float)) or annual_consumption_kwh <= 0:
         errors.append(f"annual_consumption_kwh must be a positive number, got {annual_consumption_kwh!r}")

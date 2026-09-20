@@ -1,9 +1,9 @@
 """
-orchestration.py — Agent 3's tier-gated entry point.
+orchestration.py -- Agent 3's tier-gated entry point.
 
 agent3_recommend() is the single function everything else (the FastAPI
 endpoint, later) calls. It decides whether Agent 3 runs at all based on
-tier, builds the Standard action plan, and — for Premium — adds the
+tier, builds the Standard action plan, and -- for Premium -- adds the
 sequential solarpunk/vendor/audit steps on top.
 """
 
@@ -27,19 +27,21 @@ def agent3_recommend(agent_input: Agent3Input) -> Agent3Output | None:
         return None
 
     composed = compose_query(agent_input)
-    action_plan = generate_standard_plan(composed.query_text)
+    action_plan = generate_standard_plan(
+        signals=composed.signals_used,
+        fallback_query=composed.query_text,
+    )
 
     output = Agent3Output(
         tier=agent_input.tier,
         action_plan=action_plan,
-        sl_framework_notes=[],  # TODO: populate once SL framework retrieval is built
+        sl_framework_notes=[],
         used_fallback_query=composed.used_fallback_query,
     )
 
     if agent_input.tier != Tier.PREMIUM:
         return output
 
-    # --- Premium-only, sequential ---
     if agent_input.proposal:
         output.solarpunk_plan = generate_solarpunk_plan(agent_input)
 
@@ -50,61 +52,106 @@ def agent3_recommend(agent_input: Agent3Input) -> Agent3Output | None:
 
 
 def generate_solarpunk_plan(agent_input: Agent3Input):
-    """
-    Stub for now: same RAG pattern as generate_standard_plan, but built
-    against the proposal + category='solarpunk' content. Not built yet --
-    wire this up once we're ready to move past Standard tier testing.
-    """
     print("STUB: generate_solarpunk_plan not yet implemented")
     return None
 
 
 def match_vendors(action_plan):
-    """
-    Stub for now: retrieves category='vendor' content matched against the
-    action plan's intervention types. Not built yet.
-    """
     print("STUB: match_vendors not yet implemented")
     return None
 
 
 def export_audit_trail(agent_input: Agent3Input):
-    """
-    Stub for now: reads from audit tables (agent3_runs, etc.) once
-    audit.py exists and orchestration.py is actually logging runs.
-    """
     print("STUB: export_audit_trail not yet implemented")
     return None
 
 
-if __name__ == "__main__":
-    # Hand-built fake input, matching schema.py's shape. Replace with a
-    # real Agent 2 output once that's finalized -- the shape is what
-    # matters here, not the specific numbers.
-    from schemas import Agent2Diagnostics, Anomaly
+def _build_fake_diagnostics():
+    from schemas import (
+        Agent2Diagnostics,
+        Footprint,
+        CompanyTotal,
+        SiteReport,
+        Trend,
+        HistoryCheck,
+        TrendAnomaly,
+        TrendPattern,
+        TrendForecast,
+        BudgetCheck,
+        Renewable,
+        RenewableSizingDetail,
+        SavingsAndPayback,
+    )
 
-    fake_diagnostics = Agent2Diagnostics(
-        footprint={
-            "total_co2e_kg": 18500,
-            "breakdown_by_resource": {"electricity": 14000, "diesel": 4500},
-        },
-        anomalies=[
-            Anomaly(
-                type="electricity_spike",
-                magnitude="35%",
-                period="last 2 months",
-                explanation="Unusual increase in HVAC runtime detected",
+    return Agent2Diagnostics(
+        file_id=101,
+        resource_type="electricity",
+        footprint=Footprint(
+            company_total=CompanyTotal(
+                total_kg=18500,
+                scope1_kg=4500,
+                scope2_kg=14000,
+                excluded_from_total_kg=0,
+            ),
+            failed_records=[],
+        ),
+        suspicious_value_flags=[],
+        site_reports=[
+            SiteReport(
+                site="Colombo South",
+                resource_type="electricity",
+                trend=Trend(
+                    history_check=HistoryCheck(sufficient=True),
+                    anomalies=[
+                        TrendAnomaly(
+                            period="2026-08",
+                            trigger="pct_deviation",
+                            direction="above",
+                            value=14200,
+                            baseline_mean=10500,
+                            pct_deviation=0.35,
+                            flagged=True,
+                        )
+                    ],
+                    pattern=TrendPattern(
+                        pattern="rising",
+                        message="Consumption trending upward over the last 3 months",
+                    ),
+                    forecast=TrendForecast(
+                        method="linear",
+                        forecast_value=14800,
+                        confidence="medium",
+                    ),
+                    budget_check=BudgetCheck(
+                        status="over_budget",
+                        message="Projected spend exceeds stated monthly budget",
+                    ),
+                ),
+                renewable=Renewable(
+                    sizing=RenewableSizingDetail(
+                        system_size_kwp=25.0,
+                        actual_offset_pct=0.62,
+                    ),
+                    savings_and_payback=SavingsAndPayback(
+                        status="ok",
+                        payback_years=4.2,
+                    ),
+                ),
+                benchmark_comparison=None,
+                explanation="Electricity use at Colombo South has risen steadily, driven mainly by extended HVAC runtime.",
             )
         ],
-        renewable_sizing=None,
-        budget_outlook=None,
-        sufficient_history=True,
+        audit_fingerprint="fp_test_001",
     )
+
+
+def _run_tests():
+    fake_diagnostics = _build_fake_diagnostics()
 
     print("=== Testing tier: free_trial ===")
     free_input = Agent3Input(diagnostics=fake_diagnostics, tier=Tier.FREE_TRIAL)
     result = agent3_recommend(free_input)
-    print(f"Result: {result}\n")  # should print None
+    print(f"Result: {result}\n")
 
     print("=== Testing tier: standard ===")
     standard_input = Agent3Input(diagnostics=fake_diagnostics, tier=Tier.STANDARD)
@@ -115,3 +162,7 @@ if __name__ == "__main__":
     premium_input = Agent3Input(diagnostics=fake_diagnostics, tier=Tier.PREMIUM)
     result = agent3_recommend(premium_input)
     print(result.model_dump_json(indent=2))
+
+
+if __name__ == "__main__":
+    _run_tests()

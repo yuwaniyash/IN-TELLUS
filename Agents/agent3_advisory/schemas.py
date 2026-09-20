@@ -16,33 +16,111 @@ class RecommendationTier(str, Enum):
     TRANSFORMATIVE = "transformative"
 
 
-# ---- Mirrors Agent 2's output shape (nested, not flattened) ----
+# ---- Mirrors Agent 2's REAL output shape (assemble.py / trends.py / renewable.py) ----
 
-class Anomaly(BaseModel):
-    type: str
-    magnitude: str
+class HistoryCheck(BaseModel):
+    sufficient: bool
+    message: Optional[str] = None
+
+
+class TrendAnomaly(BaseModel):
     period: str
+    trigger: str  # "z_score" | "pct_deviation" | "both"
+    direction: str  # e.g. "above" / "below"
+    value: float
+    baseline_mean: Optional[float] = None
+    pct_deviation: Optional[float] = None
+    flagged: bool = False
+
+
+class TrendPattern(BaseModel):
+    pattern: str
+    message: Optional[str] = None
+
+
+class TrendForecast(BaseModel):
+    method: str
+    forecast_value: Optional[float] = None
+    confidence: Optional[str] = None
+    message: Optional[str] = None
+
+
+class BudgetCheck(BaseModel):
+    status: str  # "over_budget" | "under_budget" | "not_evaluable" | ...
+    message: Optional[str] = None
+
+
+class Trend(BaseModel):
+    history_check: HistoryCheck
+    anomalies: list[TrendAnomaly] = []
+    pattern: Optional[TrendPattern] = None
+    forecast: Optional[TrendForecast] = None
+    budget_check: Optional[BudgetCheck] = None
+
+
+class RenewableSizingDetail(BaseModel):
+    system_size_kwp: float
+    actual_offset_pct: float
+
+
+class SavingsAndPayback(BaseModel):
+    status: str  # "ok" | "not_evaluable"
+    payback_years: Optional[float] = None
+    message: Optional[str] = None
+
+
+class Renewable(BaseModel):
+    sizing: Optional[RenewableSizingDetail] = None
+    savings_and_payback: Optional[SavingsAndPayback] = None
+    errors: list[str] = []
+
+
+class BenchmarkComparisonDetail(BaseModel):
+    status: str  # "not_evaluable" | ...
+    message: Optional[str] = None
+
+
+class BenchmarkComparison(BaseModel):
+    comparison: Optional[BenchmarkComparisonDetail] = None
+
+
+class SiteReport(BaseModel):
+    site: str
+    resource_type: str
+    trend: Trend
+    renewable: Optional[Renewable] = None
+    benchmark_comparison: Optional[BenchmarkComparison] = None
+    nlp_context: Optional[dict] = None
     explanation: Optional[str] = None
 
 
-class RenewableSizing(BaseModel):
-    recommended_solar_kw: float
-    offset_percentage: float
-    payback_years: Optional[float] = None
+class FailedRecord(BaseModel):
+    site: Optional[str] = None
+    resource_type: Optional[str] = None
+    billing_period: Optional[str] = None
+    errors: list[str] = []
 
 
-class BudgetOutlook(BaseModel):
-    projected_spend_next_month: float
-    stated_budget: Optional[float] = None
-    overrun: Optional[float] = None
+class CompanyTotal(BaseModel):
+    total_kg: float
+    scope1_kg: float = 0
+    scope2_kg: float = 0
+    excluded_from_total_kg: float = 0
+
+
+class Footprint(BaseModel):
+    company_total: CompanyTotal
+    failed_records: list[FailedRecord] = []
 
 
 class Agent2Diagnostics(BaseModel):
-    footprint: dict
-    anomalies: Optional[list[Anomaly]] = None
-    renewable_sizing: Optional[RenewableSizing] = None
-    budget_outlook: Optional[BudgetOutlook] = None
-    sufficient_history: bool
+    """Matches assemble.py's run_full_analysis() -> result dict, exactly."""
+    file_id: int
+    resource_type: str
+    footprint: Footprint
+    suspicious_value_flags: list[str] = []
+    site_reports: list[SiteReport] = []
+    audit_fingerprint: Optional[str] = None
 
 
 # ---- Agent 3's actual input contract ----

@@ -6,8 +6,8 @@ Run directly to sanity-check generation still works end to end.
 from generation import generate_standard_plan
 
 if __name__ == "__main__":
-    query = "we have high electricity costs from an old office building"
-    action_plan = generate_standard_plan(query)
+    signals = ["high electricity costs from an old office building"]
+    action_plan = generate_standard_plan(signals=signals, fallback_query=signals[0])
 
     print(f"Built {len(action_plan)} validated ActionPlanItem(s):\n")
     for item in action_plan:

@@ -1,9 +1,13 @@
 """
 generation.py — reusable RAG generation for Agent 3.
 
-Exposes generate_standard_plan(query) -> list[ActionPlanItem], the function
-orchestration.py will call for Standard tier, and again (with a different
-query/category) for Premium's solarpunk plan and vendor matching.
+generate_standard_plan() retrieves separately for EACH signal (not one
+combined query), then merges and dedupes the results before generation.
+This matches the original design: a single combined-vector search lets
+one signal's vocabulary dominate and crowd out others (e.g. renewable
+sizing crowding out a specific consumption anomaly) -- per-signal
+retrieval guarantees every signal gets a chance to surface its own
+relevant documents.
 """
 
 import os
@@ -14,15 +18,11 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 from langchain_postgres import PGVector
 from langchain_core.prompts import ChatPromptTemplate
 
-# Adjust this import path to wherever schema.py actually lives relative to this file.
 from schemas import ActionPlanItem, SourceCitation, RecommendationTier
 
 load_dotenv()
 
 
-# The LLM outputs this simpler shape -- it can name WHICH source it used,
-# but it can't honestly know a title or a relevance_score, so we don't ask
-# it for those. We fill those in ourselves from retrieval.
 class LLMRecommendation(BaseModel):
     tier: RecommendationTier = Field(description="quick_win, medium_term, or transformative")
     action: str = Field(description="A specific, actionable recommendation")
@@ -34,8 +34,6 @@ class LLMRecommendation(BaseModel):
 class LLMOutput(BaseModel):
     recommendations: List[LLMRecommendation]
 
-
-# --- Set up once at import time, reused across calls ---
 
 embeddings = GoogleGenerativeAIEmbeddings(
     model="gemini-embedding-001",
@@ -91,26 +89,33 @@ elaboration outside them."""
 chain = PROMPT | structured_llm
 
 
+def _retrieve_per_signal(signals: List[str], k_per_signal: int) -> dict:
+    merged: dict[str, tuple] = {}
+
+    for signal in signals:
+        results = vectorstore.similarity_search_with_score(signal, k=k_per_signal)
+        for doc, distance in results:
+            source_id = doc.metadata["source_id"]
+            relevance_score = round(1 - (distance / 2), 2)
+
+            if source_id not in merged or relevance_score > merged[source_id][1]:
+                merged[source_id] = (doc, relevance_score)
+
+    return merged
+
+
 def _build_action_plan(
     llm_result: LLMOutput,
-    retrieved_docs,
-    scores_by_source_id: dict[str, float],
+    doc_by_source_id: dict,
 ) -> list[ActionPlanItem]:
-    """
-    Maps the LLM's simpler output onto the real ActionPlanItem/SourceCitation
-    schema, filling in title and relevance_score from retrieval -- not
-    trusting the LLM to self-report either. Drops any recommendation citing
-    a source_id that wasn't actually retrieved (hallucination guard).
-    """
-    by_source_id = {d.metadata["source_id"]: d for d in retrieved_docs}
-
     items = []
     for rec in llm_result.recommendations:
-        doc = by_source_id.get(rec.source_id)
-        if doc is None:
+        entry = doc_by_source_id.get(rec.source_id)
+        if entry is None:
             print(f"WARNING: dropping recommendation citing unretrieved source_id '{rec.source_id}'")
             continue
 
+        doc, relevance_score = entry
         items.append(
             ActionPlanItem(
                 tier=rec.tier,
@@ -120,36 +125,33 @@ def _build_action_plan(
                 source=SourceCitation(
                     doc_id=doc.metadata["source_id"],
                     title=doc.metadata.get("title", "Untitled"),
-                    relevance_score=scores_by_source_id[doc.metadata["source_id"]],
+                    relevance_score=relevance_score,
                 ),
             )
         )
     return items
 
 
-def generate_standard_plan(query: str, k: int = 3) -> list[ActionPlanItem]:
-    """
-    The main reusable entry point. Given a composed query string, retrieves
-    relevant KB chunks, generates recommendations grounded in them, and
-    returns a validated list of ActionPlanItem -- ready to drop into
-    Agent3Output.action_plan.
+def generate_standard_plan(
+    signals: List[str] | None = None,
+    fallback_query: str | None = None,
+    k_per_signal: int = 2,
+    k_fallback: int = 3,
+) -> list[ActionPlanItem]:
+    if signals:
+        doc_by_source_id = _retrieve_per_signal(signals, k_per_signal)
+        query_for_prompt = "; ".join(signals)
+    else:
+        results = vectorstore.similarity_search_with_score(fallback_query, k=k_fallback)
+        doc_by_source_id = {
+            doc.metadata["source_id"]: (doc, round(1 - (distance / 2), 2))
+            for doc, distance in results
+        }
+        query_for_prompt = fallback_query
 
-    Also usable for Premium's solarpunk/vendor generation by passing a
-    query built with different signals (e.g. category-specific phrasing) --
-    same function, different input.
-    """
-    results = vectorstore.similarity_search_with_score(query, k=k)
-
-    # pgvector cosine distance: 0 = identical, 2 = completely opposite.
-    # Convert to a 0-1 relevance score where 1.0 = most relevant.
-    docs = [doc for doc, _ in results]
-    scores_by_source_id = {
-        doc.metadata["source_id"]: round(1 - (distance / 2), 2)
-        for doc, distance in results
-    }
-
+    docs = [doc for doc, _ in doc_by_source_id.values()]
     context = "\n".join(f"[{d.metadata['source_id']}] {d.page_content}" for d in docs)
 
-    llm_result: LLMOutput = chain.invoke({"context": context, "query": query})
+    llm_result: LLMOutput = chain.invoke({"context": context, "query": query_for_prompt})
 
-    return _build_action_plan(llm_result, docs, scores_by_source_id)
+    return _build_action_plan(llm_result, doc_by_source_id)

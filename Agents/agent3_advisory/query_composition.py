@@ -1,16 +1,18 @@
-﻿# query_composition.py
-"""
-Agent 3 â€” Step 2 (NLP): Composed query building.
+﻿"""
+query_composition.py -- Agent 3, Step 2 (NLP): Composed query building.
 
-Rule (confirmed): if ANY real signal is present â€” even one â€” it is used.
-The generic benchmark fallback only fires when there are truly zero signals
-(anomalies, budget, multi-site, SL framework applicability, user context all
-absent). This keeps `used_fallback_query` unambiguous: True means nothing at
+Built against Agent 2's REAL output shape (assemble.py / trends.py /
+renewable.py): signals come from per-site trend.anomalies (flagged only),
+trend.budget_check, renewable/benchmark availability, etc.
+
+Rule: if ANY real signal is present -- even one -- it is used. The generic
+fallback query only fires when there are truly zero signals across every
+site. This keeps used_fallback_query unambiguous: True means nothing at
 all was available, not "only a little."
 """
 
 from dataclasses import dataclass, field
-from Agents.agent3_advisory.schemas import Agent3Input, Anomaly
+from schemas import Agent3Input, SiteReport
 
 
 @dataclass
@@ -20,28 +22,58 @@ class ComposedQuery:
     used_fallback_query: bool = False
 
 
-def _anomaly_signal(anomalies: list[Anomaly] | None) -> str | None:
-    if not anomalies:
-        return None
-    parts = [f"{a.type} anomaly {a.magnitude} in {a.period}" for a in anomalies]
-    return "; ".join(parts)
+def _anomaly_signals(site_reports: list[SiteReport]) -> list[str]:
+    """
+    Includes domain vocabulary (electricity consumption, HVAC, equipment)
+    alongside the raw numbers -- a query of just numbers/dates/site names
+    has little shared vocabulary with KB documents, so embedding search
+    tends to match it to whatever document happens to share stray words
+    (e.g. "baseline") rather than the actually-relevant intervention doc.
+    """
+    signals = []
+    for report in site_reports:
+        flagged = [a for a in report.trend.anomalies if a.flagged]
+        for a in flagged:
+            pct = f"{a.pct_deviation * 100:.0f}%" if a.pct_deviation is not None else "an unspecified amount"
+            resource = report.resource_type
+            signals.append(
+                f"{report.site} {resource} consumption {a.direction} baseline by {pct} in {a.period}, "
+                f"likely caused by equipment inefficiency, degraded maintenance, or operational changes"
+            )
+    return signals
 
 
-def _budget_signal(agent_input: Agent3Input) -> str | None:
-    # Prefer an explicit project proposal budget if present, else the
-    # budget_outlook's stated_budget from Agent 2's diagnostics.
+def _budget_signals(agent_input: Agent3Input) -> list[str]:
+    signals = []
+
     if agent_input.proposal and agent_input.proposal.budget:
-        return f"budget-constrained under Rs. {agent_input.proposal.budget:,.0f}"
+        signals.append(f"budget-constrained under Rs. {agent_input.proposal.budget:,.0f}")
 
-    outlook = agent_input.diagnostics.budget_outlook
-    if outlook and outlook.stated_budget:
-        return f"budget-constrained under Rs. {outlook.stated_budget:,.0f}"
+    for report in agent_input.diagnostics.site_reports:
+        bc = report.trend.budget_check
+        if bc and bc.status == "over_budget":
+            signals.append(f"{report.site} over budget: {bc.message or ''}".strip())
 
+    return signals
+
+
+def _renewable_signal(site_reports: list[SiteReport]) -> str | None:
+    sites_with_sizing = [r.site for r in site_reports if r.renewable and r.renewable.sizing]
+    if not sites_with_sizing:
+        return None
+    return f"renewable sizing available for: {', '.join(sites_with_sizing)}"
+
+
+def _benchmark_signal(site_reports: list[SiteReport]) -> str | None:
+    for report in site_reports:
+        bc = report.benchmark_comparison
+        if bc and bc.comparison and bc.comparison.status != "not_evaluable":
+            return bc.comparison.message
     return None
 
 
 def _multi_site_signal(agent_input: Agent3Input) -> str | None:
-    if agent_input.multi_site:
+    if agent_input.multi_site or len(agent_input.diagnostics.site_reports) > 1:
         return "cross-site comparison"
     return None
 
@@ -59,31 +91,30 @@ def _user_context_signal(agent_input: Agent3Input) -> str | None:
 
 
 def _generic_fallback_query(agent_input: Agent3Input) -> str:
-    total = agent_input.diagnostics.footprint.get("total_co2e_kg", "unknown")
-    breakdown = agent_input.diagnostics.footprint.get("breakdown_by_resource", {})
-    resource_mix = ", ".join(breakdown.keys()) if breakdown else "mixed resources"
+    total = agent_input.diagnostics.footprint.company_total.total_kg
+    resource = agent_input.diagnostics.resource_type
     return (
         f"general efficiency and sustainability guidance for a facility "
-        f"emitting approximately {total} kg CO2e, primarily from {resource_mix}"
+        f"emitting approximately {total} kg CO2e, primarily from {resource}"
     )
 
 
 def compose_query(agent_input: Agent3Input) -> ComposedQuery:
-    """
-    Builds the retrieval query for Agent 3, Step 3 (IR).
+    site_reports = agent_input.diagnostics.site_reports
 
-    Gathers every available signal and combines them into one query string.
-    Falls back to a generic benchmark query only when zero signals exist.
-    """
-    signal_extractors = [
-        _anomaly_signal(agent_input.diagnostics.anomalies),
-        _budget_signal(agent_input),
+    signals = []
+    signals.extend(_anomaly_signals(site_reports))
+    signals.extend(_budget_signals(agent_input))
+
+    for s in [
+        _renewable_signal(site_reports),
+        _benchmark_signal(site_reports),
         _multi_site_signal(agent_input),
         _framework_signal(agent_input),
         _user_context_signal(agent_input),
-    ]
-
-    signals = [s for s in signal_extractors if s]
+    ]:
+        if s:
+            signals.append(s)
 
     if not signals:
         return ComposedQuery(

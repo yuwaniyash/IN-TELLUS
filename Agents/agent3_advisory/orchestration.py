@@ -13,16 +13,10 @@ from schemas import (
     Tier,
 )
 from query_composition import compose_query
-from generation import generate_standard_plan
+from generation import generate_standard_plan, generate_category_plan
 
 
 def agent3_recommend(agent_input: Agent3Input) -> Agent3Output | None:
-    """
-    Main entry point. Returns None for free_trial (Agent 3 doesn't run at
-    all), a Standard Agent3Output for standard tier, and a Premium
-    Agent3Output (with solarpunk_plan/vendor_matching/audit_trail filled
-    in) for premium tier.
-    """
     if agent_input.tier == Tier.FREE_TRIAL:
         return None
 
@@ -52,8 +46,32 @@ def agent3_recommend(agent_input: Agent3Input) -> Agent3Output | None:
 
 
 def generate_solarpunk_plan(agent_input: Agent3Input):
-    print("STUB: generate_solarpunk_plan not yet implemented")
-    return None
+    """
+    Builds a Premium-only solarpunk plan from the submitted proposal,
+    retrieving only category='solarpunk' KB content. Returns None if the
+    retrieval/generation produces nothing usable.
+    """
+    from schemas import SolarpunkPlan
+
+    proposal = agent_input.proposal
+    signals = [f"budget Rs. {proposal.budget:,.0f}"]
+
+    if proposal.goals_text:
+        signals.append(proposal.goals_text.strip())
+    if proposal.timeline_months:
+        signals.append(f"timeline of {proposal.timeline_months} months")
+
+    action_items = generate_category_plan(signals, category="solarpunk")
+
+    if not action_items:
+        return None
+
+    return SolarpunkPlan(
+        projects=[item.action for item in action_items],
+        estimated_investment=proposal.budget,
+        timeline=f"{proposal.timeline_months} months" if proposal.timeline_months else None,
+        sources=[item.source for item in action_items],
+    )
 
 
 def match_vendors(action_plan):
@@ -158,9 +176,24 @@ def _run_tests():
     result = agent3_recommend(standard_input)
     print(result.model_dump_json(indent=2))
 
-    print("\n=== Testing tier: premium ===")
+    print("\n=== Testing tier: premium (no proposal) ===")
     premium_input = Agent3Input(diagnostics=fake_diagnostics, tier=Tier.PREMIUM)
     result = agent3_recommend(premium_input)
+    print(result.model_dump_json(indent=2))
+
+    print("\n=== Testing tier: premium (with proposal) ===")
+    from schemas import ProjectProposal
+    premium_with_proposal = Agent3Input(
+        diagnostics=fake_diagnostics,
+        tier=Tier.PREMIUM,
+        proposal=ProjectProposal(
+            budget=500000,
+            site_id="Colombo South",
+            timeline_months=18,
+            goals_text="explore green roof and microgrid options for our main office building",
+        ),
+    )
+    result = agent3_recommend(premium_with_proposal)
     print(result.model_dump_json(indent=2))
 
 

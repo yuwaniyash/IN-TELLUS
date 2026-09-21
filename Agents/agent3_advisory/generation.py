@@ -155,3 +155,40 @@ def generate_standard_plan(
     llm_result: LLMOutput = chain.invoke({"context": context, "query": query_for_prompt})
 
     return _build_action_plan(llm_result, doc_by_source_id)
+
+
+def generate_category_plan(
+    signals: List[str],
+    category: str,
+    k_per_signal: int = 3,
+) -> list[ActionPlanItem]:
+    """
+    Same per-signal retrieval + merge + generate pattern as
+    generate_standard_plan, but restricted to a single KB category via
+    a metadata filter. Used for Premium's solarpunk plan (category=
+    'solarpunk') and, later, vendor matching (category='vendor').
+    """
+    merged: dict[str, tuple] = {}
+
+    for signal in signals:
+        results = vectorstore.similarity_search_with_score(
+            signal,
+            k=k_per_signal,
+            filter={"category": category},
+        )
+        for doc, distance in results:
+            source_id = doc.metadata["source_id"]
+            relevance_score = round(1 - (distance / 2), 2)
+            if source_id not in merged or relevance_score > merged[source_id][1]:
+                merged[source_id] = (doc, relevance_score)
+
+    if not merged:
+        return []
+
+    docs = [doc for doc, _ in merged.values()]
+    context = "\n".join(f"[{d.metadata['source_id']}] {d.page_content}" for d in docs)
+    query_for_prompt = "; ".join(signals)
+
+    llm_result: LLMOutput = chain.invoke({"context": context, "query": query_for_prompt})
+
+    return _build_action_plan(llm_result, merged)

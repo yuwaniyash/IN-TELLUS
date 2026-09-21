@@ -2,9 +2,10 @@
 orchestration.py -- Agent 3's tier-gated entry point.
 
 agent3_recommend() is the single function everything else (the FastAPI
-endpoint, later) calls. It decides whether Agent 3 runs at all based on
-tier, builds the Standard action plan, and -- for Premium -- adds the
-sequential solarpunk/vendor/audit steps on top.
+endpoint) calls. It decides whether Agent 3 runs at all based on tier,
+builds the Standard action plan, and -- for Premium -- adds the
+sequential solarpunk/vendor/audit steps on top. Every completed run is
+logged via audit.py for the audit trail.
 """
 
 from schemas import (
@@ -14,6 +15,12 @@ from schemas import (
 )
 from query_composition import compose_query
 from generation import generate_standard_plan, generate_category_plan
+from audit import (
+    log_agent3_run,
+    log_solarpunk_plan,
+    log_vendor_matches,
+    get_audit_trail_for_company,
+)
 
 
 def agent3_recommend(agent_input: Agent3Input) -> Agent3Output | None:
@@ -33,19 +40,32 @@ def agent3_recommend(agent_input: Agent3Input) -> Agent3Output | None:
         used_fallback_query=composed.used_fallback_query,
     )
 
+    retrieved_source_ids = [item.source.doc_id for item in action_plan]
+    site_id = agent_input.diagnostics.site_reports[0].site if agent_input.diagnostics.site_reports else None
+
+    run_id = log_agent3_run(
+        company_id=agent_input.company_id,
+        tier=agent_input.tier.value,
+        diagnostics_snapshot=agent_input.diagnostics.model_dump(),
+        composed_query=composed.query_text,
+        retrieved_source_ids=retrieved_source_ids,
+        generated_output=output.model_dump(),
+        site_id=site_id,
+    )
+
     if agent_input.tier != Tier.PREMIUM:
         return output
 
     if agent_input.proposal:
-        output.solarpunk_plan = generate_solarpunk_plan(agent_input)
+        output.solarpunk_plan = generate_solarpunk_plan(agent_input, run_id)
 
-    output.vendor_matching = match_vendors(output.action_plan)
-    output.audit_trail = export_audit_trail(agent_input)
+    output.vendor_matching = match_vendors(output.action_plan, run_id)
+    output.audit_trail = export_audit_trail(agent_input, run_id)
 
     return output
 
 
-def generate_solarpunk_plan(agent_input: Agent3Input):
+def generate_solarpunk_plan(agent_input: Agent3Input, run_id: int):
     """
     Builds a Premium-only solarpunk plan from the submitted proposal,
     retrieving only category='solarpunk' KB content. Returns None if the
@@ -66,22 +86,75 @@ def generate_solarpunk_plan(agent_input: Agent3Input):
     if not action_items:
         return None
 
-    return SolarpunkPlan(
+    plan = SolarpunkPlan(
         projects=[item.action for item in action_items],
         estimated_investment=proposal.budget,
         timeline=f"{proposal.timeline_months} months" if proposal.timeline_months else None,
         sources=[item.source for item in action_items],
     )
 
+    log_solarpunk_plan(
+        agent3_run_id=run_id,
+        proposal_snapshot=proposal.model_dump(),
+        retrieved_source_ids=[item.source.doc_id for item in action_items],
+        generated_plan=plan.model_dump(),
+    )
 
-def match_vendors(action_plan):
-    print("STUB: match_vendors not yet implemented")
-    return None
+    return plan
 
 
-def export_audit_trail(agent_input: Agent3Input):
-    print("STUB: export_audit_trail not yet implemented")
-    return None
+def match_vendors(action_plan, run_id: int):
+    """
+    Retrieves category='vendor' KB content relevant to what was actually
+    recommended in the action plan, grouping matches by the intervention
+    topic they relate to.
+    """
+    from schemas import VendorMatch
+
+    if not action_plan:
+        return None
+
+    signals = [item.action for item in action_plan]
+    vendor_items = generate_category_plan(signals, category="vendor")
+
+    if not vendor_items:
+        return None
+
+    matches_by_category: dict[str, list[str]] = {}
+    for item in vendor_items:
+        category_label = item.source.title
+        matches_by_category.setdefault(category_label, []).append(item.action)
+
+    matches = [
+        VendorMatch(category=category, matches=vals)
+        for category, vals in matches_by_category.items()
+    ]
+
+    log_vendor_matches(
+        agent3_run_id=run_id,
+        matched_categories={m.category: m.matches for m in matches},
+    )
+
+    return matches
+
+
+def export_audit_trail(agent_input: Agent3Input, run_id: int):
+    """
+    Reads back everything logged for this company so far, via audit.py.
+    Returns an AuditTrailExport summarizing the run history -- actual
+    PDF/JSON file generation is a later addition; for now this returns
+    the raw trail as JSON-in-memory (file_path stays None).
+    """
+    from schemas import AuditTrailExport
+
+    trail = get_audit_trail_for_company(agent_input.company_id)
+
+    return AuditTrailExport(
+        company_id=agent_input.company_id,
+        run_ids=trail["run_ids"],
+        export_format="json",
+        file_path=None,
+    )
 
 
 def _build_fake_diagnostics():
@@ -165,25 +238,27 @@ def _build_fake_diagnostics():
 
 def _run_tests():
     fake_diagnostics = _build_fake_diagnostics()
+    TEST_COMPANY_ID = 1  # replace with a real company_id from your `companies` table
 
     print("=== Testing tier: free_trial ===")
-    free_input = Agent3Input(diagnostics=fake_diagnostics, tier=Tier.FREE_TRIAL)
+    free_input = Agent3Input(company_id=TEST_COMPANY_ID, diagnostics=fake_diagnostics, tier=Tier.FREE_TRIAL)
     result = agent3_recommend(free_input)
     print(f"Result: {result}\n")
 
     print("=== Testing tier: standard ===")
-    standard_input = Agent3Input(diagnostics=fake_diagnostics, tier=Tier.STANDARD)
+    standard_input = Agent3Input(company_id=TEST_COMPANY_ID, diagnostics=fake_diagnostics, tier=Tier.STANDARD)
     result = agent3_recommend(standard_input)
     print(result.model_dump_json(indent=2))
 
     print("\n=== Testing tier: premium (no proposal) ===")
-    premium_input = Agent3Input(diagnostics=fake_diagnostics, tier=Tier.PREMIUM)
+    premium_input = Agent3Input(company_id=TEST_COMPANY_ID, diagnostics=fake_diagnostics, tier=Tier.PREMIUM)
     result = agent3_recommend(premium_input)
     print(result.model_dump_json(indent=2))
 
     print("\n=== Testing tier: premium (with proposal) ===")
     from schemas import ProjectProposal
     premium_with_proposal = Agent3Input(
+        company_id=TEST_COMPANY_ID,
         diagnostics=fake_diagnostics,
         tier=Tier.PREMIUM,
         proposal=ProjectProposal(

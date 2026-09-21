@@ -133,12 +133,29 @@ class ProjectProposal(BaseModel):
 
 
 class Agent3Input(BaseModel):
+    # SECURITY: company_id must be set server-side from the verified JWT
+    # (via Depends(get_current_company_id)), NEVER deserialized directly
+    # from client-supplied request JSON. Agent3ClientRequest below is
+    # what the client actually sends -- it has no company_id field, so
+    # there's nothing for a client to override.
+    company_id: int
     diagnostics: Agent2Diagnostics          # from Agent 2
     tier: Tier
     multi_site: bool = False
     sl_framework_applicable: bool = False
     user_context: Optional[str] = None      # free-text goal/notes from frontend
     proposal: Optional[ProjectProposal] = None   # only present if user submitted one
+
+
+class Agent3ClientRequest(BaseModel):
+    """What the client actually sends to /agent3/recommend. No company_id --
+    that comes from the verified JWT, server-side, never from request JSON."""
+    diagnostics: Agent2Diagnostics
+    tier: Tier
+    multi_site: bool = False
+    sl_framework_applicable: bool = False
+    user_context: Optional[str] = None
+    proposal: Optional[ProjectProposal] = None
 
 
 # ---- Output pieces ----
@@ -180,11 +197,10 @@ class VendorMatch(BaseModel):
 
 
 class AuditTrailExport(BaseModel):
-    company_id: str
+    company_id: int
     run_ids: list[int]
     export_format: str        # "pdf" | "json"
     file_path: Optional[str] = None
-
 
 # ---- Final Agent 3 output ----
 

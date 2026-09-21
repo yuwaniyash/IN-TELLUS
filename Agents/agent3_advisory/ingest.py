@@ -30,6 +30,7 @@ vectorstore = PGVector(
 )
 
 splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+vendor_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=0)
 
 SOURCE_OVERRIDES = {
     "slframework_01_energy_indicators": {
@@ -119,7 +120,7 @@ def main():
         title = title_from_filename(file_path.name)
         source_id = file_path.stem
 
-        chunks = splitter.split_text(text)
+        chunks = (vendor_splitter if category == "vendor" else splitter).split_text(text)
 
         base_metadata = {
             "source_id": source_id,

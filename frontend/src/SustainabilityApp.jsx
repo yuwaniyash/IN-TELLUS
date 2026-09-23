@@ -173,6 +173,53 @@ function SiteSetupScreen({ sites, form, onField, onSubmit, error, loading, onCon
   );
 }
 
+function HomeScreen({ onSelectTier }) {
+  const options = [
+    {
+      tier: "free_trial",
+      title: "Emissions report",
+      description: "Upload a bill and get your Scope 1 & 2 footprint, trends, and anomaly flags.",
+      cta: "Get my report",
+    },
+    {
+      tier: "standard",
+      title: "Action plan",
+      description: "Everything in the emissions report, plus a tiered, cited action plan for reducing your footprint.",
+      cta: "Get my action plan",
+    },
+    {
+      tier: "premium",
+      title: "Premium: solarpunk plan",
+      description: "Everything in the action plan, plus vendor matching, a custom solarpunk investment plan, and a full audit trail.",
+      cta: "Get premium plan",
+    },
+  ];
+
+  return (
+    <div className="ss-panel">
+      <h1 className="ss-h1">What would you like to do?</h1>
+      <p className="ss-sub">Pick the output you want — you'll upload your bill next.</p>
+
+      {options.map((opt) => (
+        <div className="ss-card" key={opt.tier} style={{ marginBottom: 16 }}>
+          <div className="ss-card-head">
+            <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>{opt.title}</span>
+          </div>
+          <p style={{ fontSize: 13, color: "var(--ink-soft)", margin: "0 0 16px", lineHeight: 1.5 }}>
+            {opt.description}
+          </p>
+          <div className="ss-actions" style={{ marginTop: 0 }}>
+            <button className="ss-btn" onClick={() => onSelectTier(opt.tier)}>
+              {opt.cta}
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function UnmappedAccountRow({ accountNumber, resourceType, sites, mapping, onChange, onSave, onAddSiteToggle, newSiteForm, onNewSiteField, onNewSiteSave }) {
   return (
     <div className="ss-card" style={{ marginBottom: 12 }}>
@@ -357,6 +404,10 @@ export default function SustainabilityApp() {
   const [siteError, setSiteError] = useState(null);
   const [siteLoading, setSiteLoading] = useState(false);
 
+  // Home screen / tier selection -- chosen once, up front, before upload.
+  const [showHome, setShowHome] = useState(true);
+  const [tier, setTier] = useState(null); // "free_trial" | "standard" | "premium" -- set by HomeScreen
+
   const [step, setStep] = useState(1);
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -472,6 +523,8 @@ export default function SustainabilityApp() {
     setSites([]);
     setSitesLoaded(false);
     setSiteSetupComplete(false);
+    setShowHome(true);
+    setTier(null);
     setStep(1);
     setRecords([]);
     setFileId(null);
@@ -867,6 +920,7 @@ export default function SustainabilityApp() {
   };
 
   const showSiteSetup = token && sitesLoaded && (!siteSetupComplete || manageSitesOpen);
+  const showHomeScreen = token && sitesLoaded && siteSetupComplete && !manageSitesOpen && showHome;
 
   return (
     <div className="ss-root">
@@ -969,6 +1023,7 @@ export default function SustainabilityApp() {
           {token && (
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <button className="ss-logout-btn" onClick={() => setManageSitesOpen(true)}><MapPin size={14} /> Manage sites</button>
+              <button className="ss-logout-btn" onClick={() => { setShowHome(true); setStep(1); setRecords([]); setFileId(null); setSelectedFile(null); setAnalysis(null); }}><Leaf size={14} />Home</button>
               <button className="ss-logout-btn" onClick={handleLogout}><LogOut size={14} /> Log out</button>
             </div>
           )}
@@ -981,10 +1036,21 @@ export default function SustainabilityApp() {
             error={authError} loading={authLoading}
             onSwitchMode={(m) => { setAuthMode(m); setAuthError(null); }}
           />
+        ) : !sitesLoaded ? (
+          <div className="ss-panel" style={{ textAlign: "center", padding: "80px 0" }}>
+            <p className="ss-sub" style={{ margin: 0 }}>Loading…</p>
+          </div>
         ) : showSiteSetup ? (
           <SiteSetupScreen
             sites={sites} form={siteForm} onField={onSiteField} onSubmit={handleAddSite}
             error={siteError} loading={siteLoading} onContinue={() => { setSiteSetupComplete(true); setManageSitesOpen(false); }}
+          />
+        ) : showHomeScreen ? (
+          <HomeScreen
+            onSelectTier={(chosenTier) => {
+              setTier(chosenTier);
+              setShowHome(false);
+            }}
           />
         ) : (
           <>
@@ -1177,7 +1243,7 @@ export default function SustainabilityApp() {
                     ))}
                     {excludedKg > 0 && (
                       <div className="ss-bar-row">
-                        <span>Water (scope 3)</span>
+                        <span>Water (not in total)</span>
                         <div className="ss-bar-track"><div className="ss-bar-fill" style={{ width: `${(excludedKg / maxScopeKg) * 100}%`, background: "var(--sage-deep)" }} /></div>
                         <span className="ss-bar-value">{excludedKg.toLocaleString()} kg</span>
                       </div>

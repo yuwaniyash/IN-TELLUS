@@ -10,12 +10,13 @@ from .schemas import (
 from .llm_fallback import llm_fallback
 from Security_Layer.auth_routes import router as auth_router
 from Security_Layer.auth import get_current_company_id
-from Security_Layer.sites_accounts_routes import router as sites_accounts_router
+from Security_Layer.site_accounts_routes import router as sites_accounts_router
 from .pipeline import run_extraction_pipeline
 from Database.save_records import save_extraction_record
 from Security_Layer.sanitization import validate_file
 from Security_Layer.file_intake import get_connection, update_processing_status
 import uuid
+from Database.get_records import get_file_metadata, get_records_for_file
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 UPLOAD_DIR = REPO_ROOT / "uploads"
@@ -202,3 +203,21 @@ async def extract(
         source_file=file.filename,
         warnings=response_warnings
     )
+
+@app.get("/files/{file_id}/records")
+def get_file_records(
+    file_id: int,
+    company_id: int = Depends(get_current_company_id),
+):
+    file_meta = get_file_metadata(file_id, company_id)
+    if file_meta is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"file_id {file_id} not found for this company",
+        )
+    records = get_records_for_file(file_id, company_id, file_meta["resource_type"])
+    return {
+        "file_id": file_id,
+        "resource_type": file_meta["resource_type"],
+        "records": records,
+    }

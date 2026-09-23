@@ -88,6 +88,29 @@ elaboration outside them."""
 
 chain = PROMPT | structured_llm
 
+VENDOR_PROMPT = ChatPromptTemplate.from_template(
+    """You are helping a company find the right TYPE of service provider for
+the actions in its carbon-reduction plan. Use ONLY the context below.
+
+Context (each item tagged with its source_id in brackets):
+{context}
+
+Query: {query}
+
+Generate exactly one item PER context item. For each:
+- action: 2-3 sentences on what this provider category does and what to
+  look for when choosing one, using the context's selection criteria. If the
+  context lists example provider names, include them exactly as written and
+  say they are fictional examples, not real businesses. Never present any
+  name as a real or recommended business.
+- reasoning: why this provider category fits the query.
+- tier: always quick_win.
+- estimated_impact: always "not applicable".
+- source_id: the exact source_id (from the brackets) of that context item."""
+)
+
+vendor_chain = VENDOR_PROMPT | structured_llm
+
 
 def _retrieve_per_signal(signals: List[str], k_per_signal: int) -> dict:
     merged: dict[str, tuple] = {}
@@ -189,6 +212,7 @@ def generate_category_plan(
     context = "\n".join(f"[{d.metadata['source_id']}] {d.page_content}" for d in docs)
     query_for_prompt = "; ".join(signals)
 
-    llm_result: LLMOutput = chain.invoke({"context": context, "query": query_for_prompt})
+    selected_chain = vendor_chain if category == "vendor" else chain
+    llm_result: LLMOutput = selected_chain.invoke({"context": context, "query": query_for_prompt})
 
     return _build_action_plan(llm_result, merged)

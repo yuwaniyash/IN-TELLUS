@@ -16,9 +16,13 @@ Agent Communication contract:
   - `result` is exactly the payload Agent 3 (Recommendation) should
     consume as its own input — Person 4's assembly step in assemble.py
     is what builds this shape.
+  - Agent 2 calls Agent 1's REST API (GET /files/{file_id}/records)
+    directly to pull this file's records, forwarding the caller's own
+    JWT rather than re-deriving one — this IS the agent-to-agent
+    communication link (see assemble.py's fetch_file_records_from_agent1).
 """
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 
 from Security_Layer.auth import get_current_company_id
 from Security_Layer.file_intake import update_processing_status
@@ -60,8 +64,19 @@ def health():
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(
     request: AnalyzeRequest,
+    http_request: Request,
     company_id: int = Depends(get_current_company_id),
 ):
+    # Forward the caller's own bearer token to Agent 1 -- Agent 2 never
+    # mints or re-derives credentials, it just passes through the same
+    # JWT that authenticated this request, so Agent 1 verifies it
+    # independently and enforces the same company scoping.
+    auth_header = http_request.headers.get("Authorization", "")
+    auth_token = auth_header.removeprefix("Bearer ").strip()
+
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
     validation = validate_analyze_request(
         file_id=request.file_id,
         monthly_budget_lkr=request.monthly_budget_lkr,
@@ -78,6 +93,7 @@ def analyze(
     outcome = run_full_analysis(
         file_id=request.file_id,
         company_id=company_id,
+        auth_token=auth_token,
         monthly_budget_lkr=request.monthly_budget_lkr,
         effective_tariff_lkr_per_kwh=request.effective_tariff_lkr_per_kwh,
         region=request.region,

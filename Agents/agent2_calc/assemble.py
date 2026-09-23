@@ -25,11 +25,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from Database.get_records import (
-    get_file_metadata,
-    get_records_for_file,
-    get_historical_monthly_series,
-)
+from Database.get_records import get_historical_monthly_series
 from Security_Layer.audit_log import flag_suspicious_values, log_calculation_run
 
 from .emissions import compute_batch, aggregate_footprint
@@ -38,7 +34,9 @@ from .renewable import size_renewable_system
 from .benchmarks import compare_to_benchmark
 from .nlp_context import process_free_text
 from .llm_context import explain_findings
+import httpx
 
+AGENT1_BASE_URL = "http://127.0.0.1:8001"  # move to config/env var later
 
 def _estimate_annual_consumption(series: list) -> dict:
     """
@@ -89,25 +87,48 @@ def _estimate_effective_tariff(company_id: int, site: str) -> Optional[float]:
         return None
     return total_cost / total_kwh
 
+def fetch_file_records_from_agent1(file_id: int, auth_token: str) -> Optional[dict]:
+    """
+    Calls Agent 1's REST API directly -- this IS the agent-to-agent
+    communication link, replacing the old shared-DB-only handoff.
+    """
+    try:
+        resp = httpx.get(
+            f"{AGENT1_BASE_URL}/files/{file_id}/records",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            timeout=10.0,
+        )
+    except httpx.RequestError as e:
+        raise RuntimeError(f"Could not reach Agent 1 at {AGENT1_BASE_URL}: {e}")
+
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
 
 def run_full_analysis(
     file_id: int,
     company_id: int,
+    auth_token: str,
     monthly_budget_lkr: Optional[float] = None,
     effective_tariff_lkr_per_kwh: Optional[float] = None,
     region: str = "mid_country",
     sector: Optional[str] = None,
     floor_area_m2: Optional[float] = None,
 ) -> dict:
-    file_meta = get_file_metadata(file_id, company_id)
-    if file_meta is None:
+    try:
+        agent1_data = fetch_file_records_from_agent1(file_id, auth_token)
+    except RuntimeError as e:
+        return {"errors": [str(e)], "result": None}
+
+    if agent1_data is None:
         return {"errors": [f"file_id {file_id} not found for this company"], "result": None}
 
-    resource_type = file_meta["resource_type"]
-    records = get_records_for_file(file_id, company_id, resource_type)
+    resource_type = agent1_data["resource_type"]
+    records = agent1_data["records"]
     if not records:
         return {"errors": [f"No consumption records found for file_id {file_id}"], "result": None}
-
+    
     suspicious_flags = flag_suspicious_values(records)
 
     emission_results = compute_batch(records)

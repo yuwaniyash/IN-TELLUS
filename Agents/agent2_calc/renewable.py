@@ -21,6 +21,19 @@ Design goals (same "no black box" stance as Persons 1 & 2):
     (Person 1's aggregated cost figures), not a guess. Without it,
     sizing/offset/generation are still computed; savings/payback are
     reported as "not_evaluable" rather than fabricated.
+
+Placement note: the project doc groups renewable sizing under Agent 3
+(Recommendation), but this module lives here in Agent 2 instead.
+Sizing math (kW needed = consumption / (irradiance x days x
+efficiency), % offset, payback) has one deterministic answer -- the
+same category as emissions.py's Scope 1/2 math, not generative
+reasoning. This module's output (result["sizing"], result["cost"],
+result["savings_and_payback"]) is passed downstream via
+Agent2Diagnostics.site_reports[].renewable, and Agent 3 consumes it
+to build the actionable, cited recommendation (e.g. pairing the
+system size with matched solar vendors) -- the calculation itself
+stays out of the RAG/LLM layer, consistent with the project's
+"no black box" principle.
 """
 
 from __future__ import annotations

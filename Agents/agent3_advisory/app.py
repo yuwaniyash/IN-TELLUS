@@ -5,6 +5,7 @@ from Security_Layer.auth import get_current_company_id
 from schemas import Agent3Input, Agent3ClientRequest, Agent3Output
 from orchestration import agent3_recommend
 
+
 app = FastAPI(
     title="Agent 3 - Sustainability Advisory",
     version="1.0.0",

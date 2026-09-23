@@ -58,10 +58,22 @@ def _budget_signals(agent_input: Agent3Input) -> list[str]:
 
 
 def _renewable_signal(site_reports: list[SiteReport]) -> str | None:
-    sites_with_sizing = [r.site for r in site_reports if r.renewable and r.renewable.sizing]
-    if not sites_with_sizing:
+    parts = []
+    for r in site_reports:
+        if r.renewable and r.renewable.sizing:
+            sizing = r.renewable.sizing
+            offset_pct = f"{sizing.actual_offset_pct * 100:.0f}%"
+            part = f"{r.site}: {sizing.system_size_kwp} kWp solar system would offset {offset_pct} of consumption"
+
+            payback = r.renewable.savings_and_payback
+            if payback and payback.status == "ok" and payback.payback_years:
+                part += f", estimated payback {payback.payback_years:.1f} years"
+
+            parts.append(part)
+
+    if not parts:
         return None
-    return f"renewable sizing available for: {', '.join(sites_with_sizing)}"
+    return "; ".join(parts)
 
 
 def _benchmark_signal(site_reports: list[SiteReport]) -> str | None:

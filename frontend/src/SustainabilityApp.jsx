@@ -6,6 +6,8 @@ const API_BASE = "http://127.0.0.1:8001";
 // Agent 2 is a SEPARATE FastAPI app/process from Agent 1 -- it never
 // shares Agent 1's port. Update this if your team runs it elsewhere.
 const AGENT2_API_BASE = "http://127.0.0.1:8002";
+// Agent 3 (recommendations / action plan) is also its own process.
+const AGENT3_API_BASE = "http://127.0.0.1:8003";
 const TOKEN_KEY = "intellus_token";
 
 // Display-only unit labels for the raw consumption summary in Step 2 --
@@ -33,6 +35,20 @@ const STEPS = [
 ];
 
 const UNMAPPED_WARNING_RE = /no site mapping for account '([^']+)'/;
+
+// Returns [{ accountNumber, resourceType }] for records whose account has no
+// site mapping yet. Plain function so both the pipeline (right after
+// extraction) and the render code can use the exact same check.
+function findUnmapped(recs) {
+  const seen = new Map();
+  for (const r of recs) {
+    const hasUnmappedWarning = r.warnings?.some((w) => UNMAPPED_WARNING_RE.test(w) || w.includes("no site mapping"));
+    if (hasUnmappedWarning && r.account_number && !seen.has(r.account_number)) {
+      seen.set(r.account_number, r.resource_type);
+    }
+  }
+  return Array.from(seen.entries()).map(([accountNumber, resourceType]) => ({ accountNumber, resourceType }));
+}
 
 function ContourMotif() {
   return (
@@ -252,7 +268,7 @@ function UnmappedAccountRow({ accountNumber, resourceType, sites, mapping, onCha
             <div className="ss-card" style={{ background: "var(--cream)", padding: 16, marginTop: 8 }}>
               <div className="ss-form-row">
                 <label className="ss-label">New site name</label>
-                <input className="ss-input" type="text" value={newSiteForm.siteName} onChange={onNewSiteField(accountNumber, "siteName")} />
+                <input className="ss-input" type="text" value={newSiteForm.siteName} onChange={onNewSiteField(accountNumber, "newSiteName")} />
               </div>
               <div className="ss-actions" style={{ marginTop: 0 }}>
                 <button type="button" className="ss-btn ss-btn-ghost" onClick={() => onAddSiteToggle(accountNumber, false)}>Cancel</button>
@@ -389,6 +405,91 @@ function SiteReportCard({ report }) {
   );
 }
 
+// Results screen for the proposal-only Premium flow (no utility bill).
+function SolarpunkOnlyView({ result, onReset }) {
+  const plan = result?.solarpunk_plan;
+  const vendors = Array.isArray(result?.vendor_matching) ? result.vendor_matching : [];
+  const audit = result?.audit_trail;
+
+  const downloadAudit = () => {
+    if (!audit) return;
+    const blob = new Blob([JSON.stringify(audit, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audit_trail_company_${audit.company_id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="ss-panel">
+      <h1 className="ss-h1">Your solarpunk plan</h1>
+      <p className="ss-sub">Built from your project proposal.</p>
+
+      {plan && (
+        <div className="ss-card">
+          <div className="ss-card-head">
+            <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>Solarpunk plan</span>
+            {plan.timeline && <span className="ss-pill">{plan.timeline}</span>}
+          </div>
+          {plan.estimated_investment != null && (
+            <div className="ss-summary-row">
+              <span>Planned investment</span>
+              <span>LKR {Number(plan.estimated_investment).toLocaleString()}</span>
+            </div>
+          )}
+          {plan.projects.map((p, i) => (
+            <p key={i} style={{ fontSize: 14, color: "var(--ink)", margin: "16px 0 0", lineHeight: 1.5 }}>{p}</p>
+          ))}
+          {plan.sources?.length > 0 && (
+            <p className="ss-optional-note">Based on: {plan.sources.map((s) => s.title).join(" \u00b7 ")}</p>
+          )}
+          <p className="ss-optional-note" style={{ marginTop: 8 }}>{plan.disclaimer}</p>
+        </div>
+      )}
+
+      {vendors.length > 0 && (
+        <div className="ss-card">
+          <div className="ss-card-head">
+            <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>Vendor matching</span>
+          </div>
+          {vendors.map((m, i) => (
+            <div key={i} style={{ marginBottom: 16 }}>
+              <p style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)", margin: "0 0 4px" }}>{m.category}</p>
+              {m.matches.map((text, j) => (
+                <p key={j} style={{ fontSize: 13, color: "var(--ink-soft)", margin: 0, lineHeight: 1.5 }}>{text}</p>
+              ))}
+            </div>
+          ))}
+          <p className="ss-optional-note" style={{ marginTop: 0 }}>
+            Provider names shown are fictional examples, not real businesses.
+          </p>
+        </div>
+      )}
+
+      {audit && (
+        <div className="ss-card">
+          <div className="ss-card-head">
+            <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>Audit trail</span>
+            <span className="ss-pill">{audit.run_ids.length} runs</span>
+          </div>
+          <p className="ss-optional-note" style={{ marginTop: 0 }}>
+            Every plan generated for your company is logged. Most recent run: #{audit.run_ids[0]}.
+          </p>
+          <button className="ss-optional-toggle" style={{ marginTop: 8 }} onClick={downloadAudit}>
+            Download audit trail (JSON)
+          </button>
+        </div>
+      )}
+
+      <div className="ss-actions">
+        <button className="ss-btn ss-btn-ghost" onClick={onReset}>Start over</button>
+      </div>
+    </div>
+  );
+}
+
 export default function SustainabilityApp() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
   const [authMode, setAuthMode] = useState("login");
@@ -423,6 +524,20 @@ export default function SustainabilityApp() {
   const [analysis, setAnalysis] = useState(null); // holds the /analyze response's "result" object
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
+
+  // Agent 3 (action plan) -- only used for the "standard" and "premium" tiers.
+  const [recommendation, setRecommendation] = useState(null);
+  const [isRecommending, setIsRecommending] = useState(false);
+  const [recommendationError, setRecommendationError] = useState(null);
+
+    // Premium: project proposal draft (extracted, then confirmed by the user)
+  const [proposalDraft, setProposalDraft] = useState(null); // { budget, siteId, timelineMonths, goals }
+  const [proposalWarnings, setProposalWarnings] = useState([]);
+  const [isExtractingProposal, setIsExtractingProposal] = useState(false);
+  const [proposalError, setProposalError] = useState(null);
+  const [isBuildingSolarpunk, setIsBuildingSolarpunk] = useState(false);
+  const [solarpunkOnly, setSolarpunkOnly] = useState(null); // proposal-only result (no bill)
+  const [solarpunkError, setSolarpunkError] = useState(null);
 
   const authFetch = useCallback(
     async (path, options = {}, base = API_BASE) => {
@@ -460,6 +575,26 @@ export default function SustainabilityApp() {
   const onAuthField = (key) => (e) => setAuthForm((prev) => ({ ...prev, [key]: e.target.value }));
   const onSiteField = (key) => (e) => setSiteForm((prev) => ({ ...prev, [key]: e.target.value }));
   const onAnalysisInputField = (key) => (e) => setAnalysisInputs((prev) => ({ ...prev, [key]: e.target.value }));
+
+  // One place that clears everything belonging to a single upload -> report run.
+  const resetRun = () => {
+    setStep(1);
+    setRecords([]);
+    setFileId(null);
+    setSelectedFile(null);
+    setError(null);
+    setAccountMappings({});
+    setAnalysis(null);
+    setAnalysisError(null);
+    setRecommendation(null);
+    setRecommendationError(null);
+    setProposalDraft(null);
+    setProposalWarnings([]);
+    setProposalError(null);
+    setSolarpunkOnly(null);
+    setSolarpunkError(null);
+    setIsBuildingSolarpunk(false);
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -525,12 +660,7 @@ export default function SustainabilityApp() {
     setSiteSetupComplete(false);
     setShowHome(true);
     setTier(null);
-    setStep(1);
-    setRecords([]);
-    setFileId(null);
-    setSelectedFile(null);
-    setError(null);
-    setAnalysis(null);
+    resetRun();
   };
 
   const handleAddSite = async (e) => {
@@ -569,6 +699,77 @@ export default function SustainabilityApp() {
     handleFile(e.dataTransfer.files?.[0]);
   }, [handleFile]);
 
+  // Step 1 button. Extracts, then -- unless an account needs mapping --
+  // runs Agent 2 (and Agent 3 for paid tiers) straight away, no extra click.
+    const handleProposalFile = async (file) => {
+      if (!file) return;
+      setIsExtractingProposal(true);
+      setProposalError(null);
+      setProposalWarnings([]);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await authFetch("/agent3/extract-proposal", { method: "POST", body: form }, AGENT3_API_BASE);
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(typeof data?.detail === "string" ? data.detail : `Could not read the proposal (${res.status})`);
+        }
+        const p = data.proposal || {};
+        const name = (p.site_name || "").toLowerCase();
+        const match = sites.find((s) => {
+          const sn = s.site_name.toLowerCase();
+          return name && (name.includes(sn) || sn.includes(name));
+        });
+        setProposalDraft({
+          budget: p.budget_lkr ?? "",
+          siteId: match ? String(match.site_id) : "",
+          timelineMonths: p.timeline_months ?? "",
+          goals: p.goals_text ?? "",
+        });
+        setProposalWarnings(data.warnings || []);
+      } catch (err) {
+        setProposalDraft(null);
+        setProposalError(err.message === "Failed to fetch" ? "Couldn't reach the backend. Is Agent 3 running?" : err.message);
+      } finally {
+        setIsExtractingProposal(false);
+      }
+    };
+    
+  const runSolarpunkOnly = async () => {
+    if (!proposalDraft || !(Number(proposalDraft.budget) > 0)) return;
+    setIsBuildingSolarpunk(true);
+    setSolarpunkError(null);
+    try {
+      const body = {
+        proposal: {
+          budget: Number(proposalDraft.budget),
+          site_id: proposalDraft.siteId || null,
+          timeline_months: proposalDraft.timelineMonths ? Math.round(Number(proposalDraft.timelineMonths)) : null,
+          goals_text: proposalDraft.goals || null,
+        },
+      };
+      const res = await authFetch(
+        "/agent3/solarpunk",
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+        AGENT3_API_BASE
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        const d = data?.detail;
+        const msg = Array.isArray(d)
+          ? d.map((e) => `${(e.loc || []).slice(1).join(".")}: ${e.msg}`).join("; ")
+          : d?.message || (typeof d === "string" ? d : `Could not build the plan (${res.status})`);
+        throw new Error(msg);
+      }
+      setSolarpunkOnly(data);
+      setStep(3);
+    } catch (err) {
+      setSolarpunkError(err.message === "Failed to fetch" ? "Couldn't reach the backend. Is Agent 3 running?" : err.message);
+    } finally {
+      setIsBuildingSolarpunk(false);
+    }
+  };
+
   const runExtraction = async () => {
     if (!selectedFile) return;
     setIsProcessing(true);
@@ -593,7 +794,15 @@ export default function SustainabilityApp() {
       setAccountMappings({});
       setAnalysis(null);
       setAnalysisError(null);
-      setStep(2);
+      setRecommendation(null);
+      setRecommendationError(null);
+
+      if (findUnmapped(data.records).length > 0) {
+        // The only legitimate stop: a human has to match the account to a site.
+        setStep(2);
+      } else {
+        await runAnalysis(data.file_id);
+      }
     } catch (err) {
       setError(err.message === "Failed to fetch" ? "Couldn't reach the backend. Is it running at " + API_BASE + "?" : err.message);
     } finally {
@@ -601,16 +810,8 @@ export default function SustainabilityApp() {
     }
   };
 
-  const unmappedAccounts = React.useMemo(() => {
-    const seen = new Map();
-    for (const r of records) {
-      const hasUnmappedWarning = r.warnings?.some((w) => UNMAPPED_WARNING_RE.test(w) || w.includes("no site mapping"));
-      if (hasUnmappedWarning && r.account_number && !seen.has(r.account_number)) {
-        seen.set(r.account_number, r.resource_type);
-      }
-    }
-    return Array.from(seen.entries()).map(([accountNumber, resourceType]) => ({ accountNumber, resourceType }));
-  }, [records]);
+  const unmappedAccounts = React.useMemo(() => findUnmapped(records), [records]);
+  const allAccountsMapped = unmappedAccounts.every((a) => accountMappings[a.accountNumber]?.saved);
 
   const updateMapping = (accountNumber, key, value) => {
     setAccountMappings((prev) => ({ ...prev, [accountNumber]: { ...prev[accountNumber], [key]: value } }));
@@ -667,18 +868,23 @@ export default function SustainabilityApp() {
   };
 
   // Calls the REAL Agent 2 endpoint -- POST /analyze { file_id, ... }.
-  // No fallback estimate: if this fails, we show the real error and stay
-  // on Step 2, rather than pretending with a fabricated number.
-  const runAnalysis = async () => {
-    if (!fileId) {
+  // idOverride is needed when called straight after extraction, because the
+  // fileId state hasn't updated yet at that point.
+  // No fallback estimate: on failure we go to Step 2 and show the real error.
+  const runAnalysis = async (idOverride) => {
+    const id = idOverride ?? fileId;
+    if (!id) {
       setAnalysisError("No file ID available for analysis.");
+      setStep(2);
       return;
     }
     setIsAnalyzing(true);
     setAnalysisError(null);
+    setRecommendation(null);
+    setRecommendationError(null);
     try {
       const body = {
-        file_id: fileId,
+        file_id: id,
         monthly_budget_lkr: analysisInputs.monthlyBudgetLkr ? Number(analysisInputs.monthlyBudgetLkr) : null,
         effective_tariff_lkr_per_kwh: analysisInputs.effectiveTariffLkrPerKwh ? Number(analysisInputs.effectiveTariffLkrPerKwh) : null,
         region: analysisInputs.region || "mid_country",
@@ -697,10 +903,58 @@ export default function SustainabilityApp() {
       }
       setAnalysis(data.result);
       setStep(3);
+      // Agent 2 -> Agent 3 hand-off, no user click in between.
+      if (tier && tier !== "free_trial") {
+        runRecommendation(data.result);
+      }
     } catch (err) {
       setAnalysisError(err.message === "Failed to fetch" ? "Couldn't reach the backend. Is Agent 2 running?" : err.message);
+      setStep(2);
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const runRecommendation = async (analysisResult) => {
+    setIsRecommending(true);
+    setRecommendationError(null);
+    try {
+      const body = {
+        diagnostics: analysisResult,
+        tier,
+        multi_site: (analysisResult.site_reports || []).length > 1,
+        sl_framework_applicable: false,
+        user_context: null,
+        proposal:
+          tier === "premium" && proposalDraft && Number(proposalDraft.budget) > 0
+            ? {
+                budget: Number(proposalDraft.budget),
+                site_id: proposalDraft.siteId || null,
+                timeline_months: proposalDraft.timelineMonths ? Math.round(Number(proposalDraft.timelineMonths)) : null,
+                goals_text: proposalDraft.goals || null,
+              }
+            : null,
+      };
+      const res = await authFetch(
+        "/agent3/recommend",
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+        AGENT3_API_BASE
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        const d = data?.detail;
+        const msg = Array.isArray(d)
+          ? d.map((e) => `${(e.loc || []).slice(1).join(".")}: ${e.msg}`).join("; ")
+          : d?.message || (typeof d === "string" ? d : `Recommendation failed (${res.status})`);
+        throw new Error(msg);
+      }
+      setRecommendation(data);
+    } catch (err) {
+      setRecommendationError(
+        err.message === "Failed to fetch" ? "Couldn't reach the backend. Is Agent 3 running?" : err.message
+      );
+    } finally {
+      setIsRecommending(false);
     }
   };
 
@@ -733,6 +987,22 @@ export default function SustainabilityApp() {
   const suspiciousFlags = analysis?.suspicious_value_flags || [];
   const siteReports = analysis?.site_reports || [];
   const failedRecords = footprint?.failed_records || [];
+  const actionPlanItems = Array.isArray(recommendation?.action_plan) ? recommendation.action_plan : [];
+
+  const solarpunkPlan = recommendation?.solarpunk_plan || null;
+  const vendorMatches = Array.isArray(recommendation?.vendor_matching) ? recommendation.vendor_matching : [];
+  const auditTrail = recommendation?.audit_trail || null;
+
+  const downloadAuditTrail = () => {
+    if (!auditTrail) return;
+    const blob = new Blob([JSON.stringify(auditTrail, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audit_trail_company_${auditTrail.company_id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const downloadPdfReport = () => {
     if (!analysis) return;
@@ -905,6 +1175,48 @@ export default function SustainabilityApp() {
       y += 6;
     });
 
+    // --- Action plan (Standard and Premium) ---
+    if (actionPlanItems.length > 0) {
+      sectionTitle("Action Plan");
+      actionPlanItems.forEach((item) => {
+        bodyLine((item.tier || "").replace("_", " ").toUpperCase(), { bold: true, size: 9, color: COLOR.forest });
+        bodyLine(item.action, { size: 9.5 });
+        bodyLine(item.reasoning, { size: 9, color: COLOR.inkSoft });
+        y += 3;
+      });
+      y += 2;
+    }
+
+    // --- Solarpunk plan (Premium) ---
+    if (solarpunkPlan) {
+      sectionTitle("Solarpunk Plan");
+      if (solarpunkPlan.estimated_investment != null) {
+        keyValueRow("Planned investment", `LKR ${Number(solarpunkPlan.estimated_investment).toLocaleString()}`);
+      }
+      if (solarpunkPlan.timeline) keyValueRow("Timeline", solarpunkPlan.timeline);
+      y += 2;
+      solarpunkPlan.projects.forEach((p) => bodyLine(`\u2022 ${p}`, { size: 9.5 }));
+      bodyLine(solarpunkPlan.disclaimer, { size: 8.5, color: COLOR.inkSoft });
+      y += 4;
+    }
+
+    // --- Vendor matching (Premium) ---
+    if (vendorMatches.length > 0) {
+      sectionTitle("Vendor Matching");
+      vendorMatches.forEach((m) => {
+        bodyLine(m.category, { bold: true, size: 9.5 });
+        m.matches.forEach((text) => bodyLine(text, { size: 9, color: COLOR.inkSoft }));
+        y += 2;
+      });
+      bodyLine("Provider names shown are fictional examples, not real businesses.", { size: 8.5, color: COLOR.inkSoft });
+      y += 4;
+    }
+
+    if (auditTrail) {
+      bodyLine(`Audit trail: ${auditTrail.run_ids.length} runs logged for this company.`, { size: 8.5, color: COLOR.inkSoft });
+      y += 2;
+    }
+
     // --- Footer ---
     ensureSpace(10);
     doc.setDrawColor(...COLOR.hairline);
@@ -974,6 +1286,7 @@ export default function SustainabilityApp() {
         .ss-btn:disabled { background: var(--hairline); color: var(--ink-soft); cursor: not-allowed; }
         .ss-btn-ghost { background: transparent; color: var(--forest-deep); padding: 11px 8px; }
         .ss-btn-ghost:hover:not(:disabled) { background: transparent; text-decoration: underline; }
+        .ss-btn-ghost:disabled { background: transparent; }
         .ss-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 14px; padding: 28px; }
         .ss-card + .ss-card { margin-top: 16px; }
         .ss-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
@@ -1023,7 +1336,7 @@ export default function SustainabilityApp() {
           {token && (
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <button className="ss-logout-btn" onClick={() => setManageSitesOpen(true)}><MapPin size={14} /> Manage sites</button>
-              <button className="ss-logout-btn" onClick={() => { setShowHome(true); setStep(1); setRecords([]); setFileId(null); setSelectedFile(null); setAnalysis(null); }}><Leaf size={14} />Home</button>
+              <button className="ss-logout-btn" onClick={() => { setShowHome(true); resetRun(); }}><Leaf size={14} />Home</button>
               <button className="ss-logout-btn" onClick={handleLogout}><LogOut size={14} /> Log out</button>
             </div>
           )}
@@ -1058,8 +1371,64 @@ export default function SustainabilityApp() {
 
             {step === 1 && (
               <div className="ss-panel">
-                <h1 className="ss-h1">Add a utility bill or usage log</h1>
-                <p className="ss-sub">Upload an electricity bill, water bill, or fuel transaction log. We'll pull out the consumption data automatically.</p>
+                <h1 className="ss-h1">{tier === "premium" ? "Plan your project" : "Add a utility bill or usage log"}</h1>
+                <p className="ss-sub">
+                  {tier === "premium"
+                    ? "Upload your project proposal and we'll build a solarpunk plan around it. You can also add a utility bill if you want your emissions report and action plan too."
+                    : "Upload an electricity bill, water bill, or fuel transaction log. We'll pull out the consumption data and build your report automatically."}
+                </p>
+                {tier === "premium" && (
+                  <div className="ss-card" style={{ marginBottom: 24 }}>
+                    <div className="ss-card-head">
+                      <span style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>Project proposal</span>
+                    </div>
+                    <p className="ss-optional-note" style={{ marginTop: 0, marginBottom: 12 }}>
+                      Upload a proposal (PDF or CSV) and we'll build a solarpunk plan around it.
+                    </p>
+                    <input type="file" accept=".pdf,.csv" onChange={(e) => handleProposalFile(e.target.files?.[0])} />
+                    {isExtractingProposal && <p className="ss-optional-note">Reading your proposal…</p>}
+                    {proposalError && (
+                      <div className="ss-error">
+                        <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                        <span>{proposalError}</span>
+                      </div>
+                    )}
+                    {proposalDraft && (
+                      <div style={{ marginTop: 16 }}>
+                        <p className="ss-optional-note" style={{ marginTop: 0 }}>Please check these details before continuing.</p>
+                        {proposalWarnings.map((w, i) => (
+                          <p key={i} className="ss-optional-note" style={{ color: "var(--tan)" }}>{w}</p>
+                        ))}
+                        <div className="ss-field-grid">
+                          <div className="ss-form-row" style={{ marginBottom: 0 }}>
+                            <label className="ss-label">Budget (LKR)</label>
+                            <input className="ss-input" type="number" min="0" value={proposalDraft.budget}
+                              onChange={(e) => setProposalDraft((d) => ({ ...d, budget: e.target.value }))} />
+                          </div>
+                          <div className="ss-form-row" style={{ marginBottom: 0 }}>
+                            <label className="ss-label">Timeline (months)</label>
+                            <input className="ss-input" type="number" min="0" value={proposalDraft.timelineMonths}
+                              onChange={(e) => setProposalDraft((d) => ({ ...d, timelineMonths: e.target.value }))} />
+                          </div>
+                          <div className="ss-form-row" style={{ marginBottom: 0 }}>
+                            <label className="ss-label">Site</label>
+                            <select className="ss-input" value={proposalDraft.siteId}
+                              onChange={(e) => setProposalDraft((d) => ({ ...d, siteId: e.target.value }))}>
+                              <option value="">Not specified</option>
+                              {sites.map((s) => <option key={s.site_id} value={s.site_id}>{s.site_name}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="ss-form-row" style={{ marginTop: 16, marginBottom: 0 }}>
+                          <label className="ss-label">Goals</label>
+                          <textarea className="ss-input" rows={3} value={proposalDraft.goals}
+                            onChange={(e) => setProposalDraft((d) => ({ ...d, goals: e.target.value }))} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div
                   className={"ss-dropzone" + (isDragging ? " is-dragging" : "")}
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -1070,26 +1439,92 @@ export default function SustainabilityApp() {
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") document.getElementById("ss-file-input").click(); }}
                 >
                   <div className="ss-dropzone-icon"><Upload size={20} strokeWidth={2} /></div>
-                  <p className="ss-dropzone-title">Drag a file here, or click to browse</p>
+                  <p className="ss-dropzone-title">{tier === "premium" ? "Optional: add a utility bill for your emissions report and action plan" : "Drag a file here, or click to browse"}</p>
                   <p className="ss-dropzone-hint">PDF or CSV, up to 10MB</p>
                   <input id="ss-file-input" type="file" accept=".pdf,.csv" style={{ display: "none" }} onChange={(e) => handleFile(e.target.files?.[0])} />
                   {selectedFile && <div className="ss-file-chip"><FileText size={14} />{selectedFile.name}</div>}
                 </div>
+
+                {tier !== "premium" && (
+                <div className="ss-card" style={{ marginTop: 24 }}>
+                  <div className="ss-card-head">
+                    <span style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>Add details for a fuller analysis</span>
+                    <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>Optional</span>
+                  </div>
+                  <div className="ss-field-grid">
+                    <div className="ss-form-row" style={{ marginBottom: 0 }}>
+                      <label className="ss-label">Monthly budget (LKR)</label>
+                      <input className="ss-input" type="number" min="0" value={analysisInputs.monthlyBudgetLkr} onChange={onAnalysisInputField("monthlyBudgetLkr")} placeholder="e.g. 150000" />
+                    </div>
+                    <div className="ss-form-row" style={{ marginBottom: 0 }}>
+                      <label className="ss-label">Electricity rate (LKR/kWh)</label>
+                      <input className="ss-input" type="number" min="0" step="0.01" value={analysisInputs.effectiveTariffLkrPerKwh} onChange={onAnalysisInputField("effectiveTariffLkrPerKwh")} placeholder="Auto-estimated if left blank" />
+                    </div>
+                    <div className="ss-form-row" style={{ marginBottom: 0 }}>
+                      <label className="ss-label">Region (for solar sizing)</label>
+                      <select className="ss-input" value={analysisInputs.region} onChange={onAnalysisInputField("region")}>
+                        {REGION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                    <div className="ss-form-row" style={{ marginBottom: 0 }}>
+                      <label className="ss-label">Sector (for benchmarking)</label>
+                      <select className="ss-input" value={analysisInputs.sector} onChange={onAnalysisInputField("sector")}>
+                        {SECTOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                    {analysisInputs.sector && (
+                      <div className="ss-form-row" style={{ marginBottom: 0 }}>
+                        <label className="ss-label">Floor area (m2)</label>
+                        <input className="ss-input" type="number" min="0" value={analysisInputs.floorAreaM2} onChange={onAnalysisInputField("floorAreaM2")} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                )}
+
                 {error && <div className="ss-error"><AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} /><span>{error}</span></div>}
                 <div className="ss-actions">
-                  <button className="ss-btn" disabled={!selectedFile || isProcessing} onClick={runExtraction}>
-                    {isProcessing ? "Reading file\u2026" : "Continue"}
-                    {!isProcessing && <ChevronRight size={15} />}
-                  </button>
+                    {solarpunkError && (
+                    <span style={{ fontSize: 13, color: "var(--tan)", alignSelf: "center" }}>{solarpunkError}</span>
+                  )}
+                  {(() => {
+                    const proposalReady = tier === "premium" && proposalDraft && Number(proposalDraft.budget) > 0;
+                    const proposalOnly = !selectedFile && proposalReady;
+                    const busy = isProcessing || isExtractingProposal || isBuildingSolarpunk;
+                    return (
+                      <button
+                        className="ss-btn"
+                        disabled={(!selectedFile && !proposalReady) || busy}
+                        onClick={selectedFile ? runExtraction : runSolarpunkOnly}
+                      >
+                        {isBuildingSolarpunk
+                          ? "Building your solarpunk plan\u2026"
+                          : isProcessing
+                            ? (isAnalyzing ? "Calculating emissions\u2026" : "Reading file\u2026")
+                            : proposalOnly ? "Build my solarpunk plan" : "Continue"}
+                        {!busy && <ChevronRight size={15} />}
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
             )}
 
+            {/* Step 2 is now an exception screen: it only appears when an
+                account needs mapping, or when the analysis failed. */}
             {step === 2 && records.length > 0 && (
               <div className="ss-panel">
-                <h1 className="ss-h1">Here's what we found</h1>
+                <h1 className="ss-h1">
+                  {unmappedAccounts.length > 0 && !allAccountsMapped ? "One quick thing" : "Here's what we found"}
+                </h1>
                 <p className="ss-sub">
-                  {records.length === 1 ? "Check the details below before we calculate emissions." : `${records.length} records extracted. Check the summary below before we calculate emissions.`}
+                  {unmappedAccounts.length > 0 && !allAccountsMapped
+                    ? "Match the new account below to a site, then we'll calculate your emissions."
+                    : analysisError
+                      ? "We extracted your data but couldn't finish the analysis."
+                      : isAnalyzing
+                        ? "Calculating your emissions\u2026"
+                        : "Everything is matched. Continue to calculate your emissions."}
                 </p>
 
                 {unmappedAccounts.map(({ accountNumber, resourceType }) => (
@@ -1124,7 +1559,6 @@ export default function SustainabilityApp() {
                       const allWarnings = records[0].warnings || [];
                       const isOptionalFieldNote = (w) => /^(previous_reading|current_reading|amount_lkr) not found by rule-based parser$/.test(w);
                       const isSiteMappingNote = (w) => w.includes("no site mapping");
-                      const optionalNotes = allWarnings.filter(isOptionalFieldNote);
                       const realWarnings = allWarnings.filter((w) => !isOptionalFieldNote(w) && !isSiteMappingNote(w));
                       return (
                         <>
@@ -1156,7 +1590,7 @@ export default function SustainabilityApp() {
                       <div className="ss-mini-list">
                         {previewRecords.map((r, i) => (
                           <div className="ss-mini-row" key={i}>
-                            <span className="ss-mini-row-left">{r.fuel_type || r.resource_type || "unknown"} \u00b7 {r.site || "unknown site"}</span>
+                            <span className="ss-mini-row-left">{r.fuel_type || r.resource_type || "unknown"} · {r.site || "unknown site"}</span>
                             <span className="ss-mini-row-right">
                               {r.consumption != null ? `${r.consumption} ${r.unit || ""}` : "\u2014"}
                               {r.warnings?.length > 0 && <AlertTriangle size={12} style={{ marginLeft: 6, verticalAlign: -2, color: "var(--tan)" }} />}
@@ -1168,41 +1602,6 @@ export default function SustainabilityApp() {
                   </>
                 )}
 
-                <div className="ss-card">
-                  <div className="ss-card-head">
-                    <span style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>Add details for a fuller analysis</span>
-                    <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>Optional</span>
-                  </div>
-                  <div className="ss-field-grid">
-                    <div className="ss-form-row" style={{ marginBottom: 0 }}>
-                      <label className="ss-label">Monthly budget (LKR)</label>
-                      <input className="ss-input" type="number" min="0" value={analysisInputs.monthlyBudgetLkr} onChange={onAnalysisInputField("monthlyBudgetLkr")} placeholder="e.g. 150000" />
-                    </div>
-                    <div className="ss-form-row" style={{ marginBottom: 0 }}>
-                      <label className="ss-label">Electricity rate (LKR/kWh)</label>
-                      <input className="ss-input" type="number" min="0" step="0.01" value={analysisInputs.effectiveTariffLkrPerKwh} onChange={onAnalysisInputField("effectiveTariffLkrPerKwh")} placeholder="Auto-estimated if left blank" />
-                    </div>
-                    <div className="ss-form-row" style={{ marginBottom: 0 }}>
-                      <label className="ss-label">Region (for solar sizing)</label>
-                      <select className="ss-input" value={analysisInputs.region} onChange={onAnalysisInputField("region")}>
-                        {REGION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </div>
-                    <div className="ss-form-row" style={{ marginBottom: 0 }}>
-                      <label className="ss-label">Sector (for benchmarking)</label>
-                      <select className="ss-input" value={analysisInputs.sector} onChange={onAnalysisInputField("sector")}>
-                        {SECTOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </div>
-                    {analysisInputs.sector && (
-                      <div className="ss-form-row" style={{ marginBottom: 0 }}>
-                        <label className="ss-label">Floor area (m2)</label>
-                        <input className="ss-input" type="number" min="0" value={analysisInputs.floorAreaM2} onChange={onAnalysisInputField("floorAreaM2")} />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
                 {analysisError && (
                   <div className="ss-error">
                     <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -1211,20 +1610,36 @@ export default function SustainabilityApp() {
                 )}
 
                 <div className="ss-actions">
-                  <button className="ss-btn ss-btn-ghost" onClick={() => setStep(1)}>Back</button>
-                  <button className="ss-btn" disabled={isAnalyzing} onClick={runAnalysis}>
-                    {isAnalyzing ? "Analyzing\u2026" : "Calculate emissions"}
-                    {!isAnalyzing && <ChevronRight size={15} />}
-                  </button>
+                  <button className="ss-btn ss-btn-ghost" disabled={isAnalyzing} onClick={() => setStep(1)}>Back</button>
+                  {isAnalyzing ? (
+                    <span style={{ fontSize: 13, color: "var(--ink-soft)", alignSelf: "center" }}>
+                      Calculating emissions…
+                    </span>
+                  ) : (
+                    (analysisError || unmappedAccounts.length > 0) && (
+                      <button
+                        className="ss-btn"
+                        disabled={!allAccountsMapped}
+                        onClick={() => runAnalysis()}
+                      >
+                        {analysisError ? "Retry calculation" : "Continue"}
+                        <ChevronRight size={15} />
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
+            )}
+
+            {step === 3 && !analysis && solarpunkOnly && (
+              <SolarpunkOnlyView result={solarpunkOnly} onReset={resetRun} />
             )}
 
             {step === 3 && analysis && (
               <div className="ss-panel">
                 <h1 className="ss-h1">Your footprint</h1>
                 <p className="ss-sub">
-                  {analysis.resource_type} \u2014 across {siteReports.length} site{siteReports.length === 1 ? "" : "s"}.
+                  {analysis.resource_type} — across {siteReports.length} site{siteReports.length === 1 ? "" : "s"}.
                 </p>
 
                 <div className="ss-hero">
@@ -1270,7 +1685,7 @@ export default function SustainabilityApp() {
                       <span>{failedRecords.length} record{failedRecords.length === 1 ? "" : "s"} couldn't be included in the emissions total due to data issues.</span>
                       {failedRecords.map((fr, i) => (
                         <div key={i} style={{ marginTop: 6, fontSize: 12, color: "var(--ink-soft)" }}>
-                          {fr.site || "unknown site"} \u00b7 {fr.resource_type || "unknown type"} \u00b7 {fr.billing_period || "unknown period"}: {(fr.errors || []).join("; ")}
+                          {fr.site || "unknown site"} · {fr.resource_type || "unknown type"} · {fr.billing_period || "unknown period"}: {(fr.errors || []).join("; ")}
                         </div>
                       ))}
                     </div>
@@ -1279,11 +1694,127 @@ export default function SustainabilityApp() {
 
                 {siteReports.map((report, i) => <SiteReportCard key={i} report={report} />)}
 
+                {tier && tier !== "free_trial" && (
+                  <div className="ss-card">
+                    <div className="ss-card-head">
+                      <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>Action plan</span>
+                    </div>
+                    {isRecommending && (
+                      <p className="ss-optional-note" style={{ marginTop: 0 }}>Generating your action plan…</p>
+                    )}
+                    {recommendationError && (
+                      <div className="ss-error" style={{ marginTop: 0 }}>
+                        <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                        <div>
+                          <span>{recommendationError}</span>
+                          <div style={{ marginTop: 6 }}>
+                            <button className="ss-optional-toggle" disabled={isRecommending} onClick={() => runRecommendation(analysis)}>Try again</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {!isRecommending && !recommendationError && recommendation && actionPlanItems.length === 0 && (
+                      <p className="ss-optional-note" style={{ marginTop: 0 }}>No actions were returned for this report.</p>
+                    )}
+                    {actionPlanItems.map((item, i) => {
+                      const impact = (item.estimated_impact || "").toLowerCase();
+                      const showImpact = impact && !impact.includes("not quantified") && !impact.includes("not applicable");
+                      return (
+                        <div
+                          key={i}
+                          style={{
+                            marginBottom: 16,
+                            paddingBottom: 16,
+                            borderBottom: i < actionPlanItems.length - 1 ? "1px solid var(--hairline)" : "none",
+                          }}
+                        >
+                          <span className="ss-pill" style={{ marginBottom: 8, display: "inline-block", textTransform: "capitalize" }}>
+                            {(item.tier || "").replace("_", " ")}
+                          </span>
+                          <p style={{ fontSize: 14, color: "var(--ink)", margin: "0 0 6px", lineHeight: 1.5 }}>{item.action}</p>
+                          <p style={{ fontSize: 13, color: "var(--ink-soft)", margin: "0 0 6px", lineHeight: 1.5 }}>{item.reasoning}</p>
+                          {showImpact && (
+                            <p style={{ fontSize: 12, color: "var(--ink-soft)", margin: 0 }}>
+                              Estimated impact: {item.estimated_impact}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {tier === "premium" && !isRecommending && recommendation && (
+                  <>
+                    {solarpunkPlan ? (
+                      <div className="ss-card">
+                        <div className="ss-card-head">
+                          <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>Solarpunk plan</span>
+                          {solarpunkPlan.timeline && <span className="ss-pill">{solarpunkPlan.timeline}</span>}
+                        </div>
+                        {solarpunkPlan.estimated_investment != null && (
+                          <div className="ss-summary-row">
+                            <span>Planned investment</span>
+                            <span>LKR {Number(solarpunkPlan.estimated_investment).toLocaleString()}</span>
+                          </div>
+                        )}
+                        {solarpunkPlan.projects.map((p, i) => (
+                          <p key={i} style={{ fontSize: 14, color: "var(--ink)", margin: "16px 0 0", lineHeight: 1.5 }}>{p}</p>
+                        ))}
+                        {solarpunkPlan.sources?.length > 0 && (
+                          <p className="ss-optional-note">
+                            Based on: {solarpunkPlan.sources.map((s) => s.title).join(" · ")}
+                          </p>
+                        )}
+                        <p className="ss-optional-note" style={{ marginTop: 8 }}>{solarpunkPlan.disclaimer}</p>
+                      </div>
+                    ) : (
+                      <div className="ss-card">
+                        <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>Solarpunk plan</span>
+                        <p className="ss-optional-note">
+                          Add a project proposal on the upload step to get a solarpunk plan built around your budget and goals.
+                        </p>
+                      </div>
+                    )}
+
+                    {vendorMatches.length > 0 && (
+                      <div className="ss-card">
+                        <div className="ss-card-head">
+                          <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>Vendor matching</span>
+                        </div>
+                        {vendorMatches.map((m, i) => (
+                          <div key={i} style={{ marginBottom: 16 }}>
+                            <p style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)", margin: "0 0 4px" }}>{m.category}</p>
+                            {m.matches.map((text, j) => (
+                              <p key={j} style={{ fontSize: 13, color: "var(--ink-soft)", margin: 0, lineHeight: 1.5 }}>{text}</p>
+                            ))}
+                          </div>
+                        ))}
+                        <p className="ss-optional-note" style={{ marginTop: 0 }}>
+                          Provider names shown are fictional examples, not real businesses.
+                        </p>
+                      </div>
+                    )}
+
+                    {auditTrail && (
+                      <div className="ss-card">
+                        <div className="ss-card-head">
+                          <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>Audit trail</span>
+                          <span className="ss-pill">{auditTrail.run_ids.length} runs</span>
+                        </div>
+                        <p className="ss-optional-note" style={{ marginTop: 0 }}>
+                          Every plan generated for your company is logged. Most recent run: #{auditTrail.run_ids[0]}.
+                        </p>
+                        <button className="ss-optional-toggle" style={{ marginTop: 8 }} onClick={downloadAuditTrail}>
+                          Download audit trail (JSON)
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+
                 <div className="ss-actions">
-                  <button
-                    className="ss-btn ss-btn-ghost"
-                    onClick={() => { setStep(1); setRecords([]); setSelectedFile(null); setFileId(null); setAnalysis(null); }}
-                  >
+                  <button className="ss-btn ss-btn-ghost" onClick={resetRun}>
                     Add another file
                   </button>
                   {analysis && (

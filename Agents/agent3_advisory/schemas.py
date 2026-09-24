@@ -90,8 +90,9 @@ class SiteReport(BaseModel):
     trend: Trend
     renewable: Optional[Renewable] = None
     benchmark_comparison: Optional[BenchmarkComparison] = None
-    nlp_context: Optional[dict] = None
-    explanation: Optional[str] = None
+    # NOTE: Agent 2's "explanation" and "nlp_context" fields are intentionally
+    # NOT declared. Agent 3 reads structured signals only; Pydantic ignores
+    # the extra keys when they arrive in the request.
 
 
 class FailedRecord(BaseModel):
@@ -201,6 +202,20 @@ class AuditTrailExport(BaseModel):
     run_ids: list[int]
     export_format: str        # "pdf" | "json"
     file_path: Optional[str] = None
+
+# ---- Proposal-only Premium flow (no utility bill needed) ----
+
+class SolarpunkRequest(BaseModel):
+    """What the client sends to /agent3/solarpunk. No company_id -- that
+    comes from the verified JWT, same as /agent3/recommend."""
+    proposal: ProjectProposal
+
+
+class SolarpunkOutput(BaseModel):
+    solarpunk_plan: SolarpunkPlan
+    vendor_matching: Optional[list[VendorMatch]] = None
+    audit_trail: Optional[AuditTrailExport] = None
+
 
 # ---- Final Agent 3 output ----
 

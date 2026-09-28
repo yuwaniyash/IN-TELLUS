@@ -1,17 +1,25 @@
 """
-orchestration.py -- Agent 3's tier-gated entry point.
+orchestration.py -- Agent 3's tier-gated entry points.
 
-agent3_recommend() is the single function everything else (the FastAPI
-endpoint) calls. It decides whether Agent 3 runs at all based on tier,
-builds the Standard action plan, and -- for Premium -- adds the
-sequential solarpunk/vendor/audit steps on top. Every completed run is
-logged via audit.py for the audit trail.
+agent3_recommend() is the bill-based flow: it builds the Standard action
+plan and, for Premium, adds the solarpunk/vendor/audit steps on top.
+
+agent3_solarpunk_only() is the proposal-only Premium flow: it needs NO
+utility bill. It builds the solarpunk plan from the proposal alone, then
+matches vendors to the plan's projects and returns the audit trail.
+
+Every completed run is logged via audit.py for the audit trail.
 """
 
 from schemas import (
     Agent3Input,
     Agent3Output,
     Tier,
+    ProjectProposal,
+    SolarpunkPlan,
+    SolarpunkOutput,
+    VendorMatch,
+    AuditTrailExport,
 )
 from query_composition import compose_query
 from generation import generate_standard_plan, generate_category_plan
@@ -23,14 +31,22 @@ from audit import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Bill-based flow (Standard and Premium)
+# ---------------------------------------------------------------------------
+
 def agent3_recommend(agent_input: Agent3Input) -> Agent3Output | None:
     if agent_input.tier == Tier.FREE_TRIAL:
         return None
 
     composed = compose_query(agent_input)
+
+    k_per_signal = 4 if len(composed.signals_used) <= 2 else 2
+
     action_plan = generate_standard_plan(
         signals=composed.signals_used,
         fallback_query=composed.query_text,
+        k_per_signal=k_per_signal,
     )
 
     output = Agent3Output(
@@ -65,15 +81,56 @@ def agent3_recommend(agent_input: Agent3Input) -> Agent3Output | None:
     return output
 
 
-def generate_solarpunk_plan(agent_input: Agent3Input, run_id: int):
-    """
-    Builds a Premium-only solarpunk plan from the submitted proposal,
-    retrieving only category='solarpunk' KB content. Returns None if the
-    retrieval/generation produces nothing usable.
-    """
-    from schemas import SolarpunkPlan
+# ---------------------------------------------------------------------------
+# Proposal-only flow (Premium, no bill needed)
+# ---------------------------------------------------------------------------
 
-    proposal = agent_input.proposal
+def agent3_solarpunk_only(company_id: int, proposal: ProjectProposal) -> SolarpunkOutput | None:
+    """
+    Builds a solarpunk plan from the proposal alone. Returns None if the
+    knowledge base produced nothing usable for this proposal.
+
+    Logged as a normal agent3_runs row with an empty diagnostics snapshot,
+    so solarpunk_plans / vendor_matches can link to it as usual.
+    """
+    plan = _build_solarpunk_plan(proposal)
+    if plan is None:
+        return None
+
+    run_id = log_agent3_run(
+        company_id=company_id,
+        tier=Tier.PREMIUM.value,
+        diagnostics_snapshot={},
+        composed_query="; ".join(_proposal_signals(proposal)),
+        retrieved_source_ids=[s.doc_id for s in plan.sources],
+        generated_output=plan.model_dump(),
+        site_id=None,
+    )
+
+    log_solarpunk_plan(
+        agent3_run_id=run_id,
+        proposal_snapshot=proposal.model_dump(),
+        retrieved_source_ids=[s.doc_id for s in plan.sources],
+        generated_plan=plan.model_dump(),
+    )
+
+    # No action plan exists here, so vendors are matched to the solarpunk
+    # projects instead (green roof -> green roof contractors, etc.).
+    vendors = _match_vendors_from_signals(plan.projects, run_id)
+    audit_trail = _audit_trail_for(company_id)
+
+    return SolarpunkOutput(
+        solarpunk_plan=plan,
+        vendor_matching=vendors,
+        audit_trail=audit_trail,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared steps
+# ---------------------------------------------------------------------------
+
+def _proposal_signals(proposal: ProjectProposal) -> list[str]:
     signals = [f"budget Rs. {proposal.budget:,.0f}"]
 
     if proposal.goals_text:
@@ -81,40 +138,54 @@ def generate_solarpunk_plan(agent_input: Agent3Input, run_id: int):
     if proposal.timeline_months:
         signals.append(f"timeline of {proposal.timeline_months} months")
 
-    action_items = generate_category_plan(signals, category="solarpunk")
+    return signals
+
+
+def _build_solarpunk_plan(proposal: ProjectProposal) -> SolarpunkPlan | None:
+    """
+    Retrieves only category='solarpunk' KB content and generates the plan.
+    Pure generation: no logging. Returns None if nothing usable came back.
+    """
+    action_items = generate_category_plan(_proposal_signals(proposal), category="solarpunk")
 
     if not action_items:
         return None
 
-    plan = SolarpunkPlan(
+    return SolarpunkPlan(
         projects=[item.action for item in action_items],
         estimated_investment=proposal.budget,
         timeline=f"{proposal.timeline_months} months" if proposal.timeline_months else None,
         sources=[item.source for item in action_items],
     )
 
+
+def generate_solarpunk_plan(agent_input: Agent3Input, run_id: int):
+    """
+    Bill-based flow: builds the plan from the submitted proposal and logs it
+    against the run that was just recorded.
+    """
+    plan = _build_solarpunk_plan(agent_input.proposal)
+    if plan is None:
+        return None
+
     log_solarpunk_plan(
         agent3_run_id=run_id,
-        proposal_snapshot=proposal.model_dump(),
-        retrieved_source_ids=[item.source.doc_id for item in action_items],
+        proposal_snapshot=agent_input.proposal.model_dump(),
+        retrieved_source_ids=[s.doc_id for s in plan.sources],
         generated_plan=plan.model_dump(),
     )
 
     return plan
 
 
-def match_vendors(action_plan, run_id: int):
+def _match_vendors_from_signals(signals: list[str], run_id: int):
     """
-    Retrieves category='vendor' KB content relevant to what was actually
-    recommended in the action plan, grouping matches by the intervention
-    topic they relate to.
+    Retrieves category='vendor' KB content relevant to the given signals,
+    grouping matches by the provider category they belong to.
     """
-    from schemas import VendorMatch
-
-    if not action_plan:
+    if not signals:
         return None
 
-    signals = [item.action for item in action_plan]
     vendor_items = generate_category_plan(signals, category="vendor")
 
     if not vendor_items:
@@ -138,24 +209,37 @@ def match_vendors(action_plan, run_id: int):
     return matches
 
 
-def export_audit_trail(agent_input: Agent3Input, run_id: int):
+def match_vendors(action_plan, run_id: int):
+    """Bill-based flow: match vendors to what the action plan recommended."""
+    if not action_plan:
+        return None
+
+    return _match_vendors_from_signals([item.action for item in action_plan], run_id)
+
+
+def _audit_trail_for(company_id: int) -> AuditTrailExport:
     """
     Reads back everything logged for this company so far, via audit.py.
-    Returns an AuditTrailExport summarizing the run history -- actual
-    PDF/JSON file generation is a later addition; for now this returns
-    the raw trail as JSON-in-memory (file_path stays None).
+    Actual PDF/JSON file generation is a later addition; for now this
+    returns the run history in memory (file_path stays None).
     """
-    from schemas import AuditTrailExport
-
-    trail = get_audit_trail_for_company(agent_input.company_id)
+    trail = get_audit_trail_for_company(company_id)
 
     return AuditTrailExport(
-        company_id=agent_input.company_id,
+        company_id=company_id,
         run_ids=trail["run_ids"],
         export_format="json",
         file_path=None,
     )
 
+
+def export_audit_trail(agent_input: Agent3Input, run_id: int):
+    return _audit_trail_for(agent_input.company_id)
+
+
+# ---------------------------------------------------------------------------
+# Manual tests
+# ---------------------------------------------------------------------------
 
 def _build_fake_diagnostics():
     from schemas import (
@@ -229,11 +313,29 @@ def _build_fake_diagnostics():
                     ),
                 ),
                 benchmark_comparison=None,
-                explanation="Electricity use at Colombo South has risen steadily, driven mainly by extended HVAC runtime.",
             )
         ],
         audit_fingerprint="fp_test_001",
     )
+
+
+def _run_solarpunk_only_test():
+    TEST_COMPANY_ID = 1  # replace with a real company_id from your `companies` table
+
+    print("=== Testing: premium, proposal only (no bill) ===")
+    result = agent3_solarpunk_only(
+        TEST_COMPANY_ID,
+        ProjectProposal(
+            budget=4500000,
+            site_id=None,
+            timeline_months=18,
+            goals_text="cut electricity use, add on-site renewable generation, and explore a green roof and a solar microgrid",
+        ),
+    )
+    if result is None:
+        print("Result: None (no solarpunk content matched)")
+    else:
+        print(result.model_dump_json(indent=2))
 
 
 def _run_tests():
@@ -256,7 +358,6 @@ def _run_tests():
     print(result.model_dump_json(indent=2))
 
     print("\n=== Testing tier: premium (with proposal) ===")
-    from schemas import ProjectProposal
     premium_with_proposal = Agent3Input(
         company_id=TEST_COMPANY_ID,
         diagnostics=fake_diagnostics,
@@ -271,6 +372,16 @@ def _run_tests():
     result = agent3_recommend(premium_with_proposal)
     print(result.model_dump_json(indent=2))
 
+    print()
+    _run_solarpunk_only_test()
+
 
 if __name__ == "__main__":
-    _run_tests()
+    import sys
+
+    # python orchestration.py solarpunk   -> runs only the proposal-only test (fast)
+    # python orchestration.py             -> runs every test
+    if "solarpunk" in sys.argv[1:]:
+        _run_solarpunk_only_test()
+    else:
+        _run_tests()

@@ -22,26 +22,29 @@ class ComposedQuery:
     used_fallback_query: bool = False
 
 
+_LIKELY_CAUSES = {
+    "electricity": "likely caused by HVAC or lighting load, inefficient equipment, or operational changes",
+    "fuel": "likely caused by generator or vehicle inefficiency, delayed maintenance, or longer operating hours",
+    "water": "likely caused by leaks, inefficient fixtures, or operational changes",
+}
+_DEFAULT_CAUSE = "likely caused by equipment inefficiency or operational changes"
+
+
 def _anomaly_signals(site_reports: list[SiteReport]) -> list[str]:
     """
-    Includes domain vocabulary (electricity consumption, HVAC, equipment)
-    alongside the raw numbers -- a query of just numbers/dates/site names
-    has little shared vocabulary with KB documents, so embedding search
-    tends to match it to whatever document happens to share stray words
-    (e.g. "baseline") rather than the actually-relevant intervention doc.
+    Domain vocabulary matches the resource type, so an electricity anomaly
+    no longer pulls in generator-maintenance documents.
     """
     signals = []
     for report in site_reports:
         flagged = [a for a in report.trend.anomalies if a.flagged]
+        cause = _LIKELY_CAUSES.get((report.resource_type or "").lower(), _DEFAULT_CAUSE)
         for a in flagged:
             pct = f"{a.pct_deviation * 100:.0f}%" if a.pct_deviation is not None else "an unspecified amount"
-            resource = report.resource_type
             signals.append(
-                f"{report.site} {resource} consumption {a.direction} baseline by {pct} in {a.period}, "
-                f"likely caused by equipment inefficiency, degraded maintenance, or operational changes"
+                f"{report.site} {report.resource_type} consumption {a.direction} baseline by {pct} in {a.period}, {cause}"
             )
     return signals
-
 
 def _budget_signals(agent_input: Agent3Input) -> list[str]:
     signals = []

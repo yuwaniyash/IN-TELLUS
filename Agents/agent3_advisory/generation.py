@@ -72,6 +72,11 @@ reasoning, and estimated_impact are actually drawn from.
 For each recommendation, include: tier, action, reasoning, estimated_impact,
 and the exact source_id (from the brackets) it was grounded in.
 
+Every action must be a concrete step the company can take. If a context
+item is a reference or definition (for example a government framework or
+standard), do not restate it. Write the action as what the company should
+do to align with it, such as "Align your reporting with ...".
+
 Write each field with real substance:
 - action: 2-3 sentences describing exactly what to do, including any
   specifics (equipment, frequency, thresholds) mentioned in the context.

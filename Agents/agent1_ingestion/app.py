@@ -12,7 +12,7 @@ from Security_Layer.auth_routes import router as auth_router
 from Security_Layer.auth import get_current_company_id
 from Security_Layer.site_accounts_routes import router as sites_accounts_router
 from .pipeline import run_extraction_pipeline
-from Database.save_records import save_extraction_record
+from Database.save_records import save_extraction_record, save_fuel_records_batch
 from Security_Layer.sanitization import validate_file
 from Security_Layer.file_intake import get_connection, update_processing_status
 import uuid
@@ -160,6 +160,7 @@ async def extract(
 
     records = []
     response_warnings = []
+    pending_fuel = []   # fuel records are saved together after the loop
 
     for partial_data in partial_data_list:
 
@@ -171,8 +172,14 @@ async def extract(
 
         missing_fields = [f for f in fields_to_check if not partial_data.get(f)]
 
-        if missing_fields:
+        is_fuel_log_row = "transaction_date" in partial_data
+
+        if missing_fields and not is_fuel_log_row:
             partial_data = llm_fallback(raw_text, partial_data)
+        elif missing_fields:
+            partial_data.setdefault("warnings", []).append(
+                f"fuel log row missing {missing_fields}; needs manual review"
+            )
 
         try:
             record = ExtractionRecord(**partial_data)
@@ -180,14 +187,28 @@ async def extract(
             response_warnings.append(f"record dropped, failed validation: {e}")
             continue
 
-        record.record_id = file_id
+        record.record_id = str(file_id)
         records.append(record)
-        try:
-            saved_id = save_extraction_record(record.model_dump(), file_id, company_id)
-            record.record_id = str(saved_id)
-        except Exception as e:
-            response_warnings.append(f"record extracted but failed to save to database: {e}")
+
+        if record.resource_type == "fuel":
+            pending_fuel.append(record)
+        else:
+            try:
+                saved_id = save_extraction_record(record.model_dump(), file_id, company_id)
+                record.record_id = str(saved_id)
+            except Exception as e:
+                response_warnings.append(f"record extracted but failed to save to database: {e}")
         response_warnings.extend(record.warnings)
+
+    if pending_fuel:
+        try:
+            saved_ids = save_fuel_records_batch(
+                [r.model_dump() for r in pending_fuel], file_id, company_id
+            )
+            for rec, saved_id in zip(pending_fuel, saved_ids):
+                rec.record_id = str(saved_id)
+        except Exception as e:
+            response_warnings.append(f"fuel records extracted but failed to save to database: {e}")
 
     if not records:
         raise HTTPException(

@@ -10,6 +10,7 @@ from datetime import date, datetime
 import calendar
 
 from Security_Layer.file_intake import get_connection
+from psycopg2.extras import execute_values
 
 
 def billing_period_to_dates(period: str | None) -> tuple[date | None, date | None]:
@@ -136,3 +137,46 @@ def save_extraction_record(record: dict, file_id: int, company_id: int) -> int:
         return save_fuel_record(record, file_id, company_id)
     else:
         raise ValueError(f"Unknown resource_type: {resource_type}")
+
+
+
+def save_fuel_records_batch(records: list[dict], file_id: int, company_id: int) -> list[int]:
+    """Saves many fuel rows over ONE connection in ONE statement."""
+    rows = []
+    for record in records:
+        txn_date = None
+        if record.get("transaction_date"):
+            try:
+                txn_date = datetime.fromisoformat(record["transaction_date"]).date()
+            except (ValueError, TypeError):
+                txn_date = None
+        rows.append((
+            txn_date, record.get("site"), record.get("fuel_type"),
+            record.get("consumption"), record.get("unit"), file_id, company_id,
+        ))
+
+    if not rows:
+        return []
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        result = execute_values(
+            cur,
+            """
+            INSERT INTO fuel_consumption
+                (transaction_date, site, fuel_type, quantity, unit, source_file_id, company_id)
+            VALUES %s
+            RETURNING fuel_record_id;
+            """,
+            rows,
+            fetch=True,
+        )
+        conn.commit()
+        return [r[0] for r in result]
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()

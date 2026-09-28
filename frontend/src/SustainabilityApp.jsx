@@ -524,6 +524,7 @@ export default function SustainabilityApp() {
   const [analysis, setAnalysis] = useState(null); // holds the /analyze response's "result" object
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
+  const [showExcluded, setShowExcluded] = useState(false);
 
   // Agent 3 (action plan) -- only used for the "standard" and "premium" tiers.
   const [recommendation, setRecommendation] = useState(null);
@@ -594,6 +595,7 @@ export default function SustainabilityApp() {
     setSolarpunkOnly(null);
     setSolarpunkError(null);
     setIsBuildingSolarpunk(false);
+    setShowExcluded(false);
   };
 
   const handleLogin = async (e) => {
@@ -987,6 +989,14 @@ export default function SustainabilityApp() {
   const suspiciousFlags = analysis?.suspicious_value_flags || [];
   const siteReports = analysis?.site_reports || [];
   const failedRecords = footprint?.failed_records || [];
+  // Group failed records by reason, e.g. "consumption is negative": 7
+  const excludedByReason = failedRecords.reduce((acc, fr) => {
+    (fr.errors || ["unspecified issue"]).forEach((e) => {
+      const reason = e.split(":")[0].trim();
+      acc[reason] = (acc[reason] || 0) + 1;
+    });
+    return acc;
+  }, {});
   const actionPlanItems = Array.isArray(recommendation?.action_plan) ? recommendation.action_plan : [];
 
   const solarpunkPlan = recommendation?.solarpunk_plan || null;
@@ -1678,20 +1688,6 @@ export default function SustainabilityApp() {
                   </div>
                 )}
 
-                {failedRecords.length > 0 && (
-                  <div className="ss-warning">
-                    <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-                    <div>
-                      <span>{failedRecords.length} record{failedRecords.length === 1 ? "" : "s"} couldn't be included in the emissions total due to data issues.</span>
-                      {failedRecords.map((fr, i) => (
-                        <div key={i} style={{ marginTop: 6, fontSize: 12, color: "var(--ink-soft)" }}>
-                          {fr.site || "unknown site"} · {fr.resource_type || "unknown type"} · {fr.billing_period || "unknown period"}: {(fr.errors || []).join("; ")}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
                 {siteReports.map((report, i) => <SiteReportCard key={i} report={report} />)}
 
                 {tier && tier !== "free_trial" && (
@@ -1811,6 +1807,36 @@ export default function SustainabilityApp() {
                       </div>
                     )}
                   </>
+                )}
+
+                {failedRecords.length > 0 && (
+                  <div className="ss-card">
+                    <div className="ss-card-head">
+                      <span style={{ fontSize: 15, fontWeight: 500, color: "var(--ink)" }}>Data notes</span>
+                      <span className="ss-pill">{failedRecords.length} excluded</span>
+                    </div>
+                    <p className="ss-optional-note" style={{ marginTop: 0 }}>
+                      {failedRecords.length} of {records.length} rows weren't included in the total
+                      ({Object.entries(excludedByReason).map(([reason, n]) => `${reason}: ${n}`).join(", ")}).
+                      The rest of your report is unaffected.
+                    </p>
+                    <button
+                      className="ss-optional-toggle"
+                      style={{ marginTop: 8 }}
+                      onClick={() => setShowExcluded((v) => !v)}
+                    >
+                      {showExcluded ? "Hide details" : "View details"}
+                    </button>
+                    {showExcluded && (
+                      <div style={{ marginTop: 12 }}>
+                        {failedRecords.map((fr, i) => (
+                          <p key={i} className="ss-anomaly-reason" style={{ marginBottom: 6 }}>
+                            {fr.site || "unknown site"} · {fr.resource_type || "unknown type"} · {fr.billing_period || "unknown period"}: {(fr.errors || []).join("; ")}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 <div className="ss-actions">

@@ -6,6 +6,8 @@ from schemas import Agent3Input, Agent3ClientRequest, Agent3Output, SolarpunkReq
 from orchestration import agent3_recommend, agent3_solarpunk_only
 from proposal_extraction import extract_proposal, ProposalExtractionResult, MAX_BYTES
 
+import traceback
+
 
 app = FastAPI(
     title="Agent 3 - Sustainability Advisory",
@@ -55,7 +57,15 @@ def recommend(
         user_context=request.user_context,
         proposal=request.proposal,
     )
-    return agent3_recommend(agent_input)
+    try:
+        return agent3_recommend(agent_input)
+    except Exception as e:
+        traceback.print_exc()
+        if any(x in str(e) for x in ("503", "504", "UNAVAILABLE", "DEADLINE")):
+            detail = "The AI service is busy right now. Please try again in a minute."
+        else:
+            detail = "Something went wrong while building the action plan."
+        raise HTTPException(status_code=503, detail=detail)
 
 
 @app.post("/agent3/extract-proposal")
@@ -91,7 +101,14 @@ def solarpunk(
     the audit trail from the proposal alone. No utility bill required.
     company_id comes from the verified JWT, never from the request body.
     """
-    result = agent3_solarpunk_only(company_id, request.proposal)
+    try:
+        result = agent3_solarpunk_only(company_id, request.proposal)
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=503,
+            detail="The AI service is busy right now. Please try again in a minute.",
+        )
     if result is None:
         raise HTTPException(
             status_code=404,

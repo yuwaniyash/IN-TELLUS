@@ -707,6 +707,7 @@ export default function SustainabilityApp() {
   const [analysis, setAnalysis] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
+  const [showExcluded, setShowExcluded] = useState(false);
 
   // Agent 3 (action plan) -- standard + premium tiers only
   const [recommendation, setRecommendation] = useState(null);
@@ -941,6 +942,14 @@ export default function SustainabilityApp() {
   const suspiciousFlags = analysis?.suspicious_value_flags || [];
   const siteReports = analysis?.site_reports || [];
   const failedRecords = footprint?.failed_records || [];
+  // Group failed records by reason, e.g. "consumption is negative": 7
+  const excludedByReason = failedRecords.reduce((acc, fr) => {
+    (fr.errors || ["unspecified issue"]).forEach((e) => {
+      const reason = e.split(":")[0].trim();
+      acc[reason] = (acc[reason] || 0) + 1;
+    });
+    return acc;
+  }, {});
   const actionPlanItems = Array.isArray(recommendation?.action_plan) ? recommendation.action_plan : [];
   const solarpunkPlan = recommendation?.solarpunk_plan || null;
   const vendorMatches = Array.isArray(recommendation?.vendor_matching) ? recommendation.vendor_matching : [];
@@ -1268,12 +1277,44 @@ export default function SustainabilityApp() {
               )}
 
               {failedRecords.length > 0 && (
-                <div className="alert-warn">
-                  <AlertTriangle size={15} style={{ flexShrink: 0 }} />
-                  <div>
-                    <span>{failedRecords.length} record{failedRecords.length === 1 ? "" : "s"} couldn't be included due to data issues.</span>
-                    {failedRecords.map((fr, i) => <div key={i} style={{ marginTop: 6, fontSize: 12, color: "var(--muted)" }}>{fr.site || "unknown"} · {fr.resource_type} · {fr.billing_period}: {(fr.errors || []).join("; ")}</div>)}
+                <div className="card">
+                  <div className="card-head">
+                    <span className="card-label">Data notes</span>
+                    <span className="pill">{failedRecords.length} excluded</span>
                   </div>
+
+                  <p className="note" style={{ marginTop: 0 }}>
+                    {failedRecords.length} of {records.length} rows weren't included in the total
+                    ({Object.entries(excludedByReason)
+                      .map(([reason, n]) => `${reason}: ${n}`)
+                      .join(", ")}).
+                    The rest of your report is unaffected.
+                  </p>
+
+                  <button
+                    className="optional-toggle"
+                    style={{ marginTop: 8 }}
+                    onClick={() => setShowExcluded((v) => !v)}
+                  >
+                    {showExcluded ? "Hide details" : "View details"}
+                  </button>
+
+                  {showExcluded && (
+                    <div style={{ marginTop: 12 }}>
+                      {failedRecords.map((fr, i) => (
+                        <p
+                          key={i}
+                          className="note"
+                          style={{ marginBottom: 6 }}
+                        >
+                          {fr.site || "unknown site"} ·{" "}
+                          {fr.resource_type || "unknown type"} ·{" "}
+                          {fr.billing_period || "unknown period"}:{" "}
+                          {(fr.errors || []).join("; ")}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 

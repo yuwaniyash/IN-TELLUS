@@ -95,6 +95,14 @@ def llm_fallback(
         )
         recovered = json.loads(response.text)
 
+        # Gemini sometimes wraps the object in a list ([{...}]) even though the
+        # prompt asks for a single object. Take the first dict; anything
+        # unusable becomes {} so the .get() calls below can't crash.
+        if isinstance(recovered, list):
+            recovered = next((r for r in recovered if isinstance(r, dict)), {})
+        if not isinstance(recovered, dict):
+            recovered = {}
+
     except (json.JSONDecodeError, Exception) as e:
         return {
             **partial_data,

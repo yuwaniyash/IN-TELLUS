@@ -75,6 +75,10 @@ vectorstore = PGVector(
     collection_name="knowledge_base",
     connection=engine,    # pass the engine instead of the URL string
     use_jsonb=True,
+    engine_args={
+        "pool_pre_ping": True,   # test the connection before each use, replace it if dead
+        "pool_recycle": 300,     # retire connections after 5 minutes
+    },
 )
 
 llm = ChatGoogleGenerativeAI(

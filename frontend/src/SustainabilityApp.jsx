@@ -306,6 +306,20 @@ const CSS = `
   }
 `;
 
+// Returns [{ accountNumber, resourceType }] for records whose account has no
+// site mapping yet. Plain function so both the pipeline (right after
+// extraction) and the render code use the exact same check.
+function findUnmapped(recs) {
+  const seen = new Map();
+  for (const r of recs) {
+    const hasUnmappedWarning = r.warnings?.some((w) => UNMAPPED_WARNING_RE.test(w) || w.includes("no site mapping"));
+    if (hasUnmappedWarning && r.account_number && !seen.has(r.account_number)) {
+      seen.set(r.account_number, r.resource_type);
+    }
+  }
+  return Array.from(seen.entries()).map(([accountNumber, resourceType]) => ({ accountNumber, resourceType }));
+}
+
 // ── LANDING ──────────────────────────────────────────────────────────
 function LandingPage({ onLogin, onSelectTier }) {
   const [scrolled, setScrolled] = useState(false);
@@ -781,6 +795,8 @@ export default function SustainabilityApp() {
   const handleFile = useCallback((f) => { if (!f) return; setSelectedFile(f); setError(null); }, []);
   const onDrop = useCallback((e) => { e.preventDefault(); setIsDragging(false); handleFile(e.dataTransfer.files?.[0]); }, [handleFile]);
 
+  // Step 1 button. Extracts, then -- unless an account needs mapping --
+  // runs Agent 2 (and Agent 3 for paid tiers) straight away, no extra click.
   const runExtraction = async () => {
     if (!selectedFile) return; setIsProcessing(true); setError(null);
     try {
@@ -790,7 +806,15 @@ export default function SustainabilityApp() {
       const data = await res.json();
       if (!data.records?.length) throw new Error("No records could be extracted.");
       if (!data.file_id) throw new Error("Agent 1 did not return a file_id.");
-      setFileId(data.file_id); setRecords(data.records); setAccountMappings({}); setAnalysis(null); setAnalysisError(null); setRecommendation(null); setRecommendationError(null); setSolarpunkOnly(null); setStep(2);
+      setFileId(data.file_id); setRecords(data.records); setAccountMappings({});
+      setAnalysis(null); setAnalysisError(null); setRecommendation(null); setRecommendationError(null); setSolarpunkOnly(null);
+
+      if (findUnmapped(data.records).length > 0) {
+        // The only legitimate stop: a human has to match the account to a site.
+        setStep(2);
+      } else {
+        await runAnalysis(data.file_id);
+      }
     } catch (err) { setError(err.message === "Failed to fetch" ? "Couldn't reach the backend." : err.message); }
     finally { setIsProcessing(false); }
   };
@@ -840,14 +864,7 @@ export default function SustainabilityApp() {
     } finally { setIsBuildingSolarpunk(false); }
   };
 
-  const unmappedAccounts = React.useMemo(() => {
-    const seen = new Map();
-    for (const r of records) {
-      if (r.warnings?.some((w) => UNMAPPED_WARNING_RE.test(w) || w.includes("no site mapping")) && r.account_number && !seen.has(r.account_number)) seen.set(r.account_number, r.resource_type);
-    }
-    return Array.from(seen.entries()).map(([accountNumber, resourceType]) => ({ accountNumber, resourceType }));
-  }, [records]);
-
+  const unmappedAccounts = React.useMemo(() => findUnmapped(records), [records]);
   const allAccountsMapped = unmappedAccounts.every((a) => accountMappings[a.accountNumber]?.saved);
   const updateMapping = (acc, key, val) => setAccountMappings((p) => ({ ...p, [acc]: { ...p[acc], [key]: val } }));
   const toggleAddSite = (acc, on) => { updateMapping(acc, "addingSite", on); updateMapping(acc, "newSiteName", ""); };
@@ -869,19 +886,25 @@ export default function SustainabilityApp() {
     } catch (err) { updateMapping(acc, "error", err.message); } finally { updateMapping(acc, "saving", false); }
   };
 
-  const runAnalysis = async () => {
-    if (!fileId) { setAnalysisError("No file ID available."); return; }
+  // Calls Agent 2's POST /analyze. idOverride is needed when called straight
+  // after extraction, because the fileId state hasn't updated yet at that point.
+  // On failure we go back to Step 2 and show the real error.
+  const runAnalysis = async (idOverride) => {
+    const id = idOverride ?? fileId;
+    if (!id) { setAnalysisError("No file ID available."); setStep(2); return; }
     setIsAnalyzing(true); setAnalysisError(null); setRecommendation(null); setRecommendationError(null);
     try {
-      const body = { file_id: fileId, monthly_budget_lkr: analysisInputs.monthlyBudgetLkr ? Number(analysisInputs.monthlyBudgetLkr) : null, effective_tariff_lkr_per_kwh: analysisInputs.effectiveTariffLkrPerKwh ? Number(analysisInputs.effectiveTariffLkrPerKwh) : null, region: analysisInputs.region || "mid_country", sector: analysisInputs.sector || null, floor_area_m2: analysisInputs.floorAreaM2 ? Number(analysisInputs.floorAreaM2) : null };
+      const body = { file_id: id, monthly_budget_lkr: analysisInputs.monthlyBudgetLkr ? Number(analysisInputs.monthlyBudgetLkr) : null, effective_tariff_lkr_per_kwh: analysisInputs.effectiveTariffLkrPerKwh ? Number(analysisInputs.effectiveTariffLkrPerKwh) : null, region: analysisInputs.region || "mid_country", sector: analysisInputs.sector || null, floor_area_m2: analysisInputs.floorAreaM2 ? Number(analysisInputs.floorAreaM2) : null };
       const res = await authFetch("/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, AGENT2_API_BASE);
       const data = await res.json();
       if (!res.ok) { const errs = data?.detail?.errors; throw new Error(data?.detail?.message || (errs ? errs.join(" ") : data?.detail) || `Analysis failed (${res.status})`); }
       setAnalysis(data.result); setStep(3);
       // Agent 2 -> Agent 3 hand-off for paid tiers
       if (tier && tier !== "free_trial") runRecommendation(data.result);
-    } catch (err) { setAnalysisError(err.message === "Failed to fetch" ? "Couldn't reach Agent 2." : err.message); }
-    finally { setIsAnalyzing(false); }
+    } catch (err) {
+      setAnalysisError(err.message === "Failed to fetch" ? "Couldn't reach Agent 2." : err.message);
+      setStep(2);
+    } finally { setIsAnalyzing(false); }
   };
 
   const runRecommendation = async (analysisResult) => {
@@ -1104,20 +1127,51 @@ export default function SustainabilityApp() {
                 <input id="ss-file-input" type="file" accept=".pdf,.csv" style={{ display: "none" }} onChange={(e) => handleFile(e.target.files?.[0])} />
                 {selectedFile && <div className="file-chip"><FileText size={14} />{selectedFile.name}</div>}
               </div>
+
+              {tier !== "premium" && (
+                <div className="card" style={{ marginTop: 24 }}>
+                  <div className="card-head"><span className="card-label">Add details for a fuller analysis</span><span style={{ fontSize: 12, color: "var(--muted)" }}>Optional</span></div>
+                  <div className="field-grid">
+                    <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Monthly budget (LKR)</label><input className="form-input" type="number" min="0" value={analysisInputs.monthlyBudgetLkr} onChange={onAnalField("monthlyBudgetLkr")} placeholder="e.g. 150000" /></div>
+                    <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Electricity rate (LKR/kWh)</label><input className="form-input" type="number" min="0" step="0.01" value={analysisInputs.effectiveTariffLkrPerKwh} onChange={onAnalField("effectiveTariffLkrPerKwh")} placeholder="Auto-estimated if left blank" /></div>
+                    <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Region (for solar sizing)</label><select className="form-input" value={analysisInputs.region} onChange={onAnalField("region")}>{REGION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>
+                    <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Sector (for benchmarking)</label><select className="form-input" value={analysisInputs.sector} onChange={onAnalField("sector")}>{SECTOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>
+                    {analysisInputs.sector && <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Floor area (m²)</label><input className="form-input" type="number" min="0" value={analysisInputs.floorAreaM2} onChange={onAnalField("floorAreaM2")} /></div>}
+                  </div>
+                </div>
+              )}
+
               {error && <div className="alert-error"><AlertTriangle size={15} style={{ flexShrink: 0 }} /><span>{error}</span></div>}
               <div className="actions">
                 {solarpunkError && <span style={{ fontSize: 13, color: "var(--danger)", alignSelf: "center" }}>{solarpunkError}</span>}
                 <button className="btn" disabled={(!selectedFile && !proposalReady) || busy} onClick={selectedFile ? runExtraction : runSolarpunkOnly}>
-                  {isBuildingSolarpunk ? "Building your solarpunk plan…" : isProcessing ? "Reading file…" : proposalOnly ? "Build my solarpunk plan" : "Continue"}{!busy && <ChevronRight size={15} />}
+                  {isBuildingSolarpunk
+                    ? "Building your solarpunk plan…"
+                    : isProcessing
+                      ? (isAnalyzing ? "Calculating emissions…" : "Reading file…")
+                      : proposalOnly ? "Build my solarpunk plan" : "Continue"}
+                  {!busy && <ChevronRight size={15} />}
                 </button>
               </div>
             </div>
           )}
 
+          {/* Step 2 is an exception screen: it only appears when an account
+              needs mapping, or when the analysis failed. */}
           {step === 2 && records.length > 0 && (
             <div className="panel">
-              <h1 className="panel-title">What we found</h1>
-              <p className="panel-sub">{records.length} record{records.length !== 1 ? "s" : ""} extracted. Review before calculating emissions.</p>
+              <h1 className="panel-title">
+                {unmappedAccounts.length > 0 && !allAccountsMapped ? "One quick thing" : "Here's what we found"}
+              </h1>
+              <p className="panel-sub">
+                {unmappedAccounts.length > 0 && !allAccountsMapped
+                  ? "Match the new account below to a site, then we'll calculate your emissions."
+                  : analysisError
+                    ? "We extracted your data but couldn't finish the analysis."
+                    : isAnalyzing
+                      ? "Calculating your emissions…"
+                      : "Everything is matched. Continue to calculate your emissions."}
+              </p>
 
               {unmappedAccounts.map(({ accountNumber, resourceType }) => (
                 <UnmappedAccountRow key={accountNumber} accountNumber={accountNumber} resourceType={resourceType} sites={sites}
@@ -1170,23 +1224,18 @@ export default function SustainabilityApp() {
                 </>
               )}
 
-              <div className="card">
-                <div className="card-head"><span className="card-label">Optional details</span><span style={{ fontSize: 12, color: "var(--muted)" }}>Improves analysis</span></div>
-                <div className="field-grid">
-                  <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Monthly budget (LKR)</label><input className="form-input" type="number" min="0" value={analysisInputs.monthlyBudgetLkr} onChange={onAnalField("monthlyBudgetLkr")} placeholder="e.g. 150000" /></div>
-                  <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Electricity rate (LKR/kWh)</label><input className="form-input" type="number" min="0" step="0.01" value={analysisInputs.effectiveTariffLkrPerKwh} onChange={onAnalField("effectiveTariffLkrPerKwh")} placeholder="Auto-estimated" /></div>
-                  <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Region</label><select className="form-input" value={analysisInputs.region} onChange={onAnalField("region")}>{REGION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>
-                  <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Sector</label><select className="form-input" value={analysisInputs.sector} onChange={onAnalField("sector")}>{SECTOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>
-                  {analysisInputs.sector && <div className="form-row" style={{ marginBottom: 0 }}><label className="form-label">Floor area (m²)</label><input className="form-input" type="number" min="0" value={analysisInputs.floorAreaM2} onChange={onAnalField("floorAreaM2")} /></div>}
-                </div>
-              </div>
-
               {analysisError && <div className="alert-error"><AlertTriangle size={15} style={{ flexShrink: 0 }} /><span>{analysisError}</span></div>}
               <div className="actions">
-                <button className="btn btn-ghost" onClick={() => setStep(1)}>Back</button>
-                <button className="btn" disabled={isAnalyzing || !allAccountsMapped} onClick={() => runAnalysis()}>
-                  {isAnalyzing ? "Analyzing…" : "Calculate emissions"}{!isAnalyzing && <ChevronRight size={15} />}
-                </button>
+                <button className="btn btn-ghost" disabled={isAnalyzing} onClick={() => setStep(1)}>Back</button>
+                {isAnalyzing ? (
+                  <span style={{ fontSize: 13, color: "var(--muted)", alignSelf: "center" }}>Calculating emissions…</span>
+                ) : (
+                  (analysisError || unmappedAccounts.length > 0) && (
+                    <button className="btn" disabled={!allAccountsMapped} onClick={() => runAnalysis()}>
+                      {analysisError ? "Retry calculation" : "Continue"}<ChevronRight size={15} />
+                    </button>
+                  )
+                )}
               </div>
             </div>
           )}

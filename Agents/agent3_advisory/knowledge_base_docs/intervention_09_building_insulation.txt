@@ -1,0 +1,9 @@
+﻿Building insulation reduces unwanted heat transfer through roofs, walls, floors, and other parts of the building envelope. Improving insulation can reduce the amount of heating or cooling required to maintain indoor conditions, although the actual benefit depends on the existing construction, climate, occupancy, and HVAC system.
+
+Common improvement areas include roof or ceiling insulation, wall insulation, and insulation of relevant building components. Air leakage around doors, windows, service penetrations, and other openings should also be considered because insulation and air sealing address related but different sources of building heat transfer.
+
+Before installing insulation, facilities should assess existing construction, moisture conditions, structural requirements, fire-safety considerations, and the location of the proposed work. The most appropriate insulation strategy should be selected according to the building design rather than assuming that one material or thickness is suitable for every facility.
+
+Sri Lanka's Energy Efficiency Building Code includes requirements and guidance relating to building energy efficiency and building-envelope performance.
+
+Source basis: Sri Lanka Sustainable Energy Authority Energy Efficiency Building Code and U.S. Department of Energy building-envelope guidance.

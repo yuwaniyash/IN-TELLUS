@@ -1,0 +1,9 @@
+﻿Boiler and steam-system efficiency can be affected by combustion conditions, heat losses, steam leaks, insulation, condensate management, and operating practices. Facilities using boilers should maintain appropriate inspection and maintenance procedures and monitor boiler performance according to the equipment manufacturer's requirements and applicable safety requirements.
+
+Common efficiency measures include checking and repairing steam traps, repairing steam leaks, insulating steam and condensate-return piping, optimizing combustion conditions, and reviewing boiler blowdown practices. Where technically and economically appropriate, waste-heat recovery and condensate-return improvements can also reduce energy losses.
+
+Combustion adjustment should be performed by qualified personnel because incorrect combustion conditions can affect efficiency, emissions, equipment operation, and safety. Boiler modifications should also consider applicable pressure-vessel, fuel, emissions, and safety requirements.
+
+The appropriate intervention depends on boiler type, fuel, operating load, steam demand, condensate-return arrangement, and equipment condition.
+
+Source basis: U.S. Department of Energy steam-system and boiler efficiency guidance.

@@ -1,0 +1,52 @@
+{
+  "_meta": {
+    "description": "Reference assumptions for Person 3's renewable (solar) sizing calculation. Values are published, cited figures for Sri Lanka — update as newer official data / vendor quotes become available.",
+    "last_reviewed": "2026-09-12"
+  },
+
+  "solar_irradiance_by_region": {
+    "_meta": {
+      "unit": "peak_sun_hours_per_day (numerically equal to kWh/m2/day)",
+      "source": "Sri Lanka Sustainable Energy Authority (energy.gov.lk) — national GHI range 1,247–2,106 kWh/m2/year, lowland higher than mountainous; cross-checked against ADB (2017) national estimate of 4-6 kWh/m2/day.",
+      "notes": "These are broad regional TIERS, not per-district figures — no officially published per-district table was found. For a specific site, prefer real coordinates via the Global Solar Atlas (globalsolaratlas.info) if precision matters (e.g. final quotation stage). Use these tiers for scoping/estimation only."
+    },
+    "lowland_coastal": {
+      "peak_sun_hours": 5.6,
+      "description": "Coastal belt and low-elevation areas (e.g. Colombo, Galle, Jaffna, Trincomalee, Hambantota) — highest end of the national GHI range."
+    },
+    "mid_country": {
+      "peak_sun_hours": 4.6,
+      "description": "Mid-elevation, partially cloud-affected areas (e.g. Kurunegala, Kandy outskirts, Ratnapura) — national average."
+    },
+    "hill_country": {
+      "peak_sun_hours": 3.6,
+      "description": "Central highlands / mountainous areas (e.g. Nuwara Eliya, higher parts of Badulla) — lowest end of the national GHI range due to persistent cloud cover and shadowing."
+    }
+  },
+
+  "system_efficiency": {
+    "value": 0.80,
+    "source": "Typical grid-tied PV system performance ratio accounting for inverter, wiring, soiling and temperature losses (industry standard range 75-85%; NREL PVWatts methodology).",
+    "notes": "This is a derating factor applied to theoretical panel output, not panel efficiency itself."
+  },
+
+  "installation_cost": {
+    "on_grid_no_battery": {
+      "cost_lkr_per_kw_low": 180000,
+      "cost_lkr_per_kw_high": 280000,
+      "cost_lkr_per_kw_default": 230000,
+      "source": "Sri Lanka commercial solar market estimate, 2026 (on-grid/net-accounting system, no battery storage)",
+      "source_note": "stanthonyssolar.lk 2026 cost guide; cross-checked against multiple vendor-quoted ranges. VERIFY against current vendor quotes before presenting a final client-facing number — this is a scoping estimate, not a quotation."
+    }
+  },
+
+  "feed_in_tariff": {
+    "net_accounting_export": {
+      "rate_lkr_per_kwh_low": 15.81,
+      "rate_lkr_per_kwh_high": 23.11,
+      "rate_lkr_per_kwh_default": 19.5,
+      "source": "PUCSL rooftop solar feed-in tariff revision, August 2026 (valid through February 2027)",
+      "notes": "Actual rate depends on system capacity band (e.g. systems up to 10kW get the higher end). Default used here is the approximate midpoint; recompute with the exact band once system size is known if precision matters for the client report."
+    }
+  }
+}

@@ -1,0 +1,244 @@
+from pathlib import Path
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+
+from .schemas import (
+    ExtractionRecord,
+    ExtractionResponse
+)
+
+from .llm_fallback import llm_fallback
+from Security_Layer.auth_routes import router as auth_router
+from Security_Layer.auth import get_current_company_id
+from Security_Layer.site_accounts_routes import router as sites_accounts_router
+from .pipeline import run_extraction_pipeline
+from Database.save_records import save_extraction_record, save_fuel_records_batch
+from Security_Layer.sanitization import validate_file
+from Security_Layer.file_intake import get_connection, update_processing_status
+import uuid
+from Database.get_records import get_file_metadata, get_records_for_file
+
+REPO_ROOT = Path(__file__).parent.parent.parent
+UPLOAD_DIR = REPO_ROOT / "uploads"
+
+app = FastAPI(
+    title="Agent 1 - Data Extraction",
+    version="1.0.0"
+)
+
+# CORS: required because the React frontend (localhost:5173) calls this
+# API (localhost:8001) from a different origin. Any request carrying a
+# custom header -- like Authorization: Bearer <token> -- triggers a
+# browser CORS "preflight" OPTIONS request first. Without this
+# middleware, FastAPI has no OPTIONS handler for these routes at all and
+# rejects the preflight with 405, which then surfaces in the browser as
+# a generic failed request on the REAL call that never even gets sent.
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth_router)
+app.include_router(sites_accounts_router)
+
+
+def create_raw_file_record(file_name, resource_type, file_type, file_path, company_id):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO raw_files (file_name, resource_type, file_type, file_path, processing_status, company_id)
+               VALUES (%s, %s, %s, %s, 'PENDING', %s) RETURNING file_id;""",
+            (file_name, resource_type, file_type, file_path, company_id)
+        )
+        file_id = cur.fetchone()[0]
+        conn.commit()
+        return file_id
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/")
+def root():
+    return {"agent": "Agent 1", "status": "running"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+
+@app.post("/extract", response_model=ExtractionResponse)
+async def extract(
+    file: UploadFile = File(...),
+    company_id: int = Depends(get_current_company_id),
+):
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    suffix = Path(file.filename).suffix.lower()
+
+    if suffix not in {".pdf", ".csv"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{suffix}'. Only .pdf and .csv are supported."
+        )
+
+    file_type = suffix.replace(".", "")
+    contents = await file.read()
+
+    is_valid, reason = validate_file(contents, file.filename)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=reason)
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    unique_filename = f"{uuid.uuid4()}{suffix}"
+    saved_path = UPLOAD_DIR / unique_filename
+    saved_path.write_bytes(contents)
+    relative_file_path = str(saved_path.relative_to(REPO_ROOT))
+
+    try:
+        raw_text, partial_data_list = run_extraction_pipeline(str(saved_path), file_type, company_id)
+
+        resource_types = {
+            data.get("resource_type")
+            for data in partial_data_list
+            if data.get("resource_type")
+        }
+
+        if not resource_types:
+            raise ValueError("Could not determine resource type from the uploaded file.")
+
+        resource_type = next(iter(resource_types))
+
+        file_id = create_raw_file_record(
+            file_name=file.filename,
+            resource_type=resource_type,
+            file_type=file_type,
+            file_path=relative_file_path,
+            company_id=company_id
+        )
+
+        update_processing_status(file_id, "PROCESSING")
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "Extraction pipeline failed", "error": str(e)}
+        )
+
+    # previous_reading, current_reading, and amount_lkr are genuinely
+    # optional for bills -- consumption is what emissions calculations
+    # actually need, and many real bill layouts simply don't have all
+    # three of these in an extractable form. Requiring them forced every
+    # such bill through the full LLM fallback for no real benefit.
+    #
+    # "site" is deliberately NOT in this list. A missing site should
+    # never trigger an LLM guess -- it's already correctly surfaced by
+    # resolve_site()'s "no site mapping" warning and handled by the
+    # frontend's dedicated account-confirmation flow. Guessing it here
+    # would silently reintroduce exactly the text-scraping approach this
+    # project moved away from in favor of account-number-based lookup.
+    required_fields = [
+        "resource_type",
+        "consumption",
+        "unit",
+        "billing_period",
+    ]
+    required_fields_fuel = [
+        "resource_type",
+        "consumption",
+        "unit",
+        "site"
+    ]
+
+    records = []
+    response_warnings = []
+    pending_fuel = []   # fuel records are saved together after the loop
+
+    for partial_data in partial_data_list:
+
+        fields_to_check = (
+            required_fields_fuel
+            if partial_data.get("resource_type") == "fuel"
+            else required_fields
+        )
+
+        missing_fields = [f for f in fields_to_check if not partial_data.get(f)]
+
+        is_fuel_log_row = "transaction_date" in partial_data
+
+        if missing_fields and not is_fuel_log_row:
+            partial_data = llm_fallback(raw_text, partial_data)
+        elif missing_fields:
+            partial_data.setdefault("warnings", []).append(
+                f"fuel log row missing {missing_fields}; needs manual review"
+            )
+
+        try:
+            record = ExtractionRecord(**partial_data)
+        except Exception as e:
+            response_warnings.append(f"record dropped, failed validation: {e}")
+            continue
+
+        record.record_id = str(file_id)
+        records.append(record)
+
+        if record.resource_type == "fuel":
+            pending_fuel.append(record)
+        else:
+            try:
+                saved_id = save_extraction_record(record.model_dump(), file_id, company_id)
+                record.record_id = str(saved_id)
+            except Exception as e:
+                response_warnings.append(f"record extracted but failed to save to database: {e}")
+        response_warnings.extend(record.warnings)
+
+    if pending_fuel:
+        try:
+            saved_ids = save_fuel_records_batch(
+                [r.model_dump() for r in pending_fuel], file_id, company_id
+            )
+            for rec, saved_id in zip(pending_fuel, saved_ids):
+                rec.record_id = str(saved_id)
+        except Exception as e:
+            response_warnings.append(f"fuel records extracted but failed to save to database: {e}")
+
+    if not records:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "No records could be extracted or validated from this file."}
+        )
+
+    update_processing_status(file_id, "COMPLETED")
+    return ExtractionResponse(
+        success=True,
+        file_id=file_id,
+        records=records,
+        source_file=file.filename,
+        warnings=response_warnings
+    )
+
+@app.get("/files/{file_id}/records")
+def get_file_records(
+    file_id: int,
+    company_id: int = Depends(get_current_company_id),
+):
+    file_meta = get_file_metadata(file_id, company_id)
+    if file_meta is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"file_id {file_id} not found for this company",
+        )
+    records = get_records_for_file(file_id, company_id, file_meta["resource_type"])
+    return {
+        "file_id": file_id,
+        "resource_type": file_meta["resource_type"],
+        "records": records,
+    }

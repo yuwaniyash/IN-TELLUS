@@ -1,0 +1,7 @@
+﻿Occupancy sensors automatically control lighting when a space is occupied or unoccupied. They can be useful in intermittently occupied spaces such as meeting rooms, storage rooms, restrooms, corridors, and other areas where lighting may remain on when no one is present.
+
+Different sensor technologies are available, including passive infrared, ultrasonic, and dual-technology sensors. Sensor selection should consider the room layout, expected movement, obstructions, and the type of activity taking place. A sensor that is poorly positioned or unsuitable for the activity may fail to detect occupants or may switch lighting off when lighting is still required.
+
+Occupancy-based controls can also be coordinated with other building systems where appropriate, including HVAC controls. Facilities should test sensor settings after installation and adjust time delays and detection areas to balance energy savings with occupant comfort and operational requirements.
+
+Source basis: U.S. Department of Energy and Better Buildings guidance on occupancy-based lighting controls.

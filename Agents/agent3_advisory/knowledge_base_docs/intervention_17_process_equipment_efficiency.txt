@@ -1,0 +1,9 @@
+﻿Industrial and commercial process equipment can consume significant energy depending on the type of process, equipment capacity, operating schedule, and production requirements. Examples include ovens, dryers, pumps, mixers, compressors, conveyors, furnaces, and specialized production machinery.
+
+Facilities should review whether process equipment is operating according to manufacturer recommendations and whether operating schedules match actual production requirements. Equipment that remains operating during breaks, changeovers, idle periods, or other periods of low demand should be assessed to determine whether it can be safely reduced or shut down.
+
+Energy use can also be compared with a relevant production indicator, such as electricity or fuel consumed per unit of product. Tracking this type of energy-intensity measure can help identify changes in equipment or process performance that would not be visible from total energy consumption alone.
+
+Any change to process equipment operation should be checked against production quality, safety, equipment protection, and process requirements before implementation.
+
+Source basis: industrial energy-management practice; equipment-specific recommendations should follow manufacturer and process requirements.

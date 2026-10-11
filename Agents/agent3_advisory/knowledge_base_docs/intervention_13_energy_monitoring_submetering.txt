@@ -1,0 +1,9 @@
+﻿Energy monitoring records electricity, fuel, or other energy use over time so that facilities can identify consumption patterns and unusual changes. A facility-wide utility meter provides total consumption, while sub-metering can provide more detailed information for individual buildings, departments, equipment groups, or processes.
+
+Sub-metering can help identify which systems are responsible for high or changing energy consumption. It can also support measurement and verification after an efficiency intervention by comparing energy use before and after implementation.
+
+Facilities should select monitoring points based on the questions they need to answer. Useful measurements may include electricity consumption, demand, operating hours, production activity, temperature, or other variables relevant to the process.
+
+Energy monitoring should be interpreted together with operational information. A change in energy consumption does not automatically indicate equipment failure or inefficiency because production levels, occupancy, weather, operating hours, and other conditions can also affect energy use.
+
+Source basis: U.S. Department of Energy and Better Buildings guidance on energy monitoring and sub-metering.

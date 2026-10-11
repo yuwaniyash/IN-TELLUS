@@ -1,0 +1,9 @@
+﻿Duct sealing reduces unwanted air leakage from HVAC ductwork. Leakage can occur at duct joints, connections, access panels, transitions, and other points where sections of the air-distribution system are not properly sealed.
+
+Facilities should inspect accessible ductwork for visible damage, disconnected sections, deteriorated seals, and other leakage points. Particular attention may be appropriate where ducts pass through unconditioned spaces because leakage in these locations can waste conditioned air before it reaches the occupied space.
+
+Appropriate sealing materials and methods should be selected according to the duct construction and environmental conditions. Repairs should not obstruct dampers, access panels, fire-safety equipment, or other components required for safe HVAC operation.
+
+Duct sealing should be considered together with HVAC balancing, insulation, filtration, and equipment condition because improving one part of an air-distribution system may not address other sources of energy loss.
+
+Source basis: building HVAC and air-distribution efficiency practice; detailed duct work should be assessed by qualified HVAC personnel.

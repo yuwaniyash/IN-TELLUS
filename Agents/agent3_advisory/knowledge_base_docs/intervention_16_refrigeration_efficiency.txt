@@ -1,0 +1,9 @@
+﻿Refrigeration systems such as cold rooms, freezers, display refrigerators, and process-cooling equipment can consume energy continuously because they often operate for long periods. Efficiency can be affected by door and gasket condition, condenser and evaporator cleanliness, airflow, temperature settings, equipment condition, and refrigeration-system faults.
+
+Facilities should regularly inspect door gaskets and automatic closers and repair damaged components that allow warm air to enter refrigerated spaces. Condenser and evaporator surfaces should be maintained according to manufacturer requirements so that dirt and debris do not interfere with heat transfer.
+
+Temperature setpoints should be appropriate for the stored product or process rather than being made colder than necessary without a technical reason. Refrigeration equipment should also have adequate airflow around heat-exchange components.
+
+Refrigerant charging, refrigerant leaks, and refrigeration-system repairs should be handled by appropriately qualified technicians because incorrect servicing can affect equipment performance, safety, and environmental impacts.
+
+Source basis: U.S. Department of Energy guidance on commercial refrigeration equipment.

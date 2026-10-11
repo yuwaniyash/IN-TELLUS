@@ -1,0 +1,10 @@
+
+Intervention 19 water leak detection and conservation · TXT
+Once a water-use anomaly has been confirmed through meter checks and physical inspection, facilities have several options beyond leak repair for reducing consumption on an ongoing basis. Submetering by zone or process line, rather than relying on a single facility-wide meter, allows consumption trends to be tracked at a more granular level and makes it easier to confirm whether a fix has actually resolved the issue.
+ 
+Fixture and equipment-level efficiency measures can reduce baseline demand independently of any specific leak. These include low-flow taps and aerators, dual-flush or sensor-based toilet controls, and efficient cooling-system components. Process improvements that reduce unnecessary water use in cleaning, cooling, or production activities can produce similar reductions without requiring capital equipment changes.
+ 
+For facilities with substantial or recurring water demand, larger-scale measures such as greywater recycling, rainwater harvesting, or closed-loop cooling and process-water systems can meaningfully reduce reliance on fresh water intake. These measures typically require a longer implementation timeline and higher upfront investment than fixture-level fixes or leak repair, and are generally most relevant where consumption reduction from smaller interventions has already been exhausted.
+ 
+Source basis: general water-efficiency and water-reuse practice; site-specific water systems and process requirements should be assessed by qualified personnel.
+ 

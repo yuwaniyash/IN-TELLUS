@@ -1,0 +1,9 @@
+﻿Behavioral and operational energy-efficiency practices address energy consumption caused by how equipment and building systems are used during normal operations. Examples include lights or equipment remaining on outside required operating hours, unnecessary HVAC operation in unoccupied areas, and equipment being left in standby or operating mode when it is not required.
+
+Facilities can establish clear shutdown procedures for the end of shifts, weekends, holidays, and planned production breaks. Staff should be informed about which equipment can safely be switched off and which systems must remain operational for safety, security, environmental control, or process requirements.
+
+Simple measures such as signage, checklists, staff awareness activities, and responsibility assignments can support consistent implementation. Where possible, behavioral measures should be supported by automatic controls or monitoring rather than relying entirely on people remembering to take action.
+
+Energy consumption should be monitored after operational changes so that the facility can determine whether the new practices are being followed and whether they produce the intended result.
+
+Source basis: U.S. Department of Energy facility energy-management guidance.

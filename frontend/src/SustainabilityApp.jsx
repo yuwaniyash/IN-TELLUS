@@ -321,9 +321,10 @@ function findUnmapped(recs) {
 }
 
 // ── LANDING ──────────────────────────────────────────────────────────
-function LandingPage({ onLogin, onSelectTier }) {
+function LandingPage({ onLogin, onSelectTier, loggedIn = false }) {
   const [scrolled, setScrolled] = useState(false);
   const featuresRef = useRef(null);
+  const tiersRef = useRef(null);
 
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 60);
@@ -332,6 +333,7 @@ function LandingPage({ onLogin, onSelectTier }) {
   }, []);
 
   const scrollToFeatures = () => featuresRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToTiers = () => tiersRef.current?.scrollIntoView({ behavior: "smooth" });
 
   const features = [
     { icon: <Zap size={18} />, title: "Instant extraction", desc: "Upload any PDF or CSV utility bill. We pull consumption, site, and period automatically — no manual entry." },
@@ -347,22 +349,24 @@ function LandingPage({ onLogin, onSelectTier }) {
 
   return (
     <div className="lp-root">
-      <nav className={`lp-nav${scrolled ? " scrolled" : ""}`}>
-        <div className="lp-brand"><div className="lp-brand-dot" /><span>IN-TELLUS</span></div>
-        <div className="lp-nav-actions">
-          <button className="btn btn-ghost" style={{ fontSize: 13 }} onClick={onLogin}>Log in</button>
-          <button className="btn" style={{ fontSize: 13 }} onClick={onLogin}>Get started</button>
-        </div>
-      </nav>
+      {!loggedIn && (
+        <nav className={`lp-nav${scrolled ? " scrolled" : ""}`}>
+          <div className="lp-brand"><div className="lp-brand-dot" /><span>IN-TELLUS</span></div>
+          <div className="lp-nav-actions">
+            <button className="btn btn-ghost" style={{ fontSize: 13 }} onClick={onLogin}>Log in</button>
+            <button className="btn" style={{ fontSize: 13 }} onClick={onLogin}>Get started</button>
+          </div>
+        </nav>
+      )}
 
-      <HeroLanding onGetStarted={onLogin} onLearnMore={scrollToFeatures} />
+      <HeroLanding onGetStarted={loggedIn ? scrollToTiers : onLogin} onLearnMore={scrollToFeatures} />
       <DrawCircleText />
 
       <div ref={featuresRef}>
         <CardsFeatures />
       </div>
 
-      <section className="lp-tiers">
+      <section className="lp-tiers" ref={tiersRef}>
         <p className="lp-section-label">Choose your output</p>
         <h2 className="lp-section-title">Pick what <b>you need</b></h2>
         <div className="lp-tier-grid">
@@ -1007,6 +1011,45 @@ export default function SustainabilityApp() {
     doc.save(`intellus_report_${reportSite.replace(/[^a-z0-9]+/gi,"_").toLowerCase()}.pdf`);
   };
 
+    // ── Browser back/forward support ─────────────────────────────────────
+  const viewKey = !token
+    ? (showAuth ? "auth" : "landing")
+    : !sitesLoaded ? "loading"
+    : (!siteSetupComplete || manageSitesOpen) ? "sites"
+    : showHome ? "home"
+    : `step-${step}`;
+
+  const prevView = useRef(null);
+
+  useEffect(() => {
+    if (viewKey === "loading") return;
+    const prev = prevView.current;
+    prevView.current = viewKey;
+    if (prev === null) { window.history.replaceState({ view: viewKey }, ""); return; }
+    if (window.history.state?.view === viewKey) return;
+    const justLoggedIn = (prev === "auth" || prev === "landing") && viewKey !== "auth" && viewKey !== "landing";
+    if (justLoggedIn) window.history.replaceState({ view: viewKey }, "");
+    else window.history.pushState({ view: viewKey }, "");
+  }, [viewKey]);
+
+  useEffect(() => {
+    const onPop = (e) => {
+      const view = e.state?.view;
+      if (!view) return;
+      if (!token) { setShowAuth(view === "auth"); return; }
+      if (view === "landing" || view === "auth") { window.history.back(); return; }
+      if (view === "sites") { setManageSitesOpen(true); return; }
+      setManageSitesOpen(false);
+      if (view === "home") { setShowHome(true); return; }
+      setShowHome(false);
+      if (view === "step-3" && (analysis || solarpunkOnly)) setStep(3);
+      else if (view === "step-2" && records.length > 0) setStep(2);
+      else setStep(1);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [token, analysis, solarpunkOnly, records]);
+
   // ── ROUTING ─────────────────────────────────────────────────────────
   if (showAuth || (!token && showAuth)) {
     return (
@@ -1058,14 +1101,15 @@ export default function SustainabilityApp() {
     return (
       <>
         <style>{CSS}</style>
-        <LandingPage
-          onLogin={() => {}}
-          onSelectTier={(t) => { setTier(t); setShowHome(false); }}
-        />
         <AppNav
           onManageSites={() => setManageSitesOpen(true)}
           onHome={() => { setShowHome(true); resetRun(); }}
           onLogout={handleLogout}
+        />
+        <LandingPage
+          loggedIn
+          onLogin={() => {}}
+          onSelectTier={(t) => { setTier(t); setShowHome(false); }}
         />
       </>
     );

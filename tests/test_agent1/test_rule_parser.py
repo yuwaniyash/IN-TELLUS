@@ -17,6 +17,11 @@ from Agents.agent1_ingestion.rule_parser import parse_bill_text
 
 SAMPLE_DIR = Path(__file__).parent.parent.parent / "data" / "sample_bills"
 
+# Fields the parser has always had to find. Newer optional fields
+# (previous_reading, current_reading, amount_lkr) are reported in
+# missing_fields when a bill does not contain them, rather than guessed.
+CORE_FIELDS = {"consumption", "unit_raw", "billing_date", "account_number"}
+
 
 def test_real_water_bill():
     text = extract_text(str(SAMPLE_DIR / "water_bill_real.pdf"), "pdf")
@@ -26,7 +31,7 @@ def test_real_water_bill():
     assert result.unit_raw.value == "m³"
     assert result.billing_date.value == "2026-07-28"
     assert result.account_number.value == "08/42/105/928/14"
-    assert result.missing_fields == []
+    assert not CORE_FIELDS & set(result.missing_fields)
 
 
 def test_real_electricity_bill():
@@ -46,4 +51,4 @@ def test_synthetic_electricity_bill_still_works():
     result = parse_bill_text(text)
 
     assert result.consumption.value == "12450"
-    assert result.missing_fields == []
+    assert not CORE_FIELDS & set(result.missing_fields)
